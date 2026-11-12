@@ -38,6 +38,14 @@ Once installed it opens from its icon and runs with no internet. Internet is nee
 
 ## Build and test
 
+Everything (build, unit tests, every browser test):
+
+```sh
+test/run-all.sh
+```
+
+Individually:
+
 ```sh
 python3 build.py
 node test/core.test.js
