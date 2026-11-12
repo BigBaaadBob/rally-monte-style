@@ -1,5 +1,11 @@
 import asyncio, json
 from playwright.async_api import async_playwright
+import pathlib
+HERE = pathlib.Path(__file__).resolve().parent
+APP = 'file://' + str(HERE.parents[1] / 'dist/index.html')   # run python3 build.py first
+PAGE = str(HERE / 'page.png')
+OUT = pathlib.Path('/tmp/rally-e2e'); OUT.mkdir(exist_ok=True)   # screenshots
+
 REPLY = '''Here are the rows. RI 193 is at the [curve-left sign].
 ```json
 [{"ri":193,"om":"2.29","czt":"15:42:00","cp":65,"instr":"CHECKPOINT at [curve-left sign, 30 MPH].","info":"(CP 65.)"},
@@ -17,11 +23,11 @@ async def main():
         await ctx.grant_permissions(['clipboard-read','clipboard-write'])
         pg = await ctx.new_page(); errs=[]
         pg.on('pageerror', lambda e: errs.append(str(e)))
-        await pg.goto('file:///home/claude/rt/dist/index.html'); await pg.evaluate('localStorage.clear()'); await pg.reload()
+        await pg.goto(APP); await pg.evaluate('localStorage.clear()'); await pg.reload()
         print('injected present in live page:', await pg.evaluate("!!document.getElementById('fakecsp')"))
         selfhtml = await pg.evaluate('SELF_HTML')
         print('offline copy has CSP meta:', 'fakecsp' in selfhtml, '| injected script:', '__injected' in selfhtml, '| our scripts:', selfhtml.count('<script data-rt'))
-        open('/tmp/rtt/offline.html','w').write(selfhtml)
+        open(str(OUT / 'offline.html'),'w').write(selfhtml)
         await pg.click('#btnNewSample')
         # speedo persists across reload
         await pg.click('#tabs button[data-v=run]'); await pg.click('[data-sp="5"]'); await pg.click('[data-sp="1"]')
@@ -41,11 +47,11 @@ async def main():
         # offline copy runs standalone; Read explains the API key
         pg2 = await (await b.new_context(viewport={'width':390,'height':844})).new_page(); e2=[]
         pg2.on('pageerror', lambda e: e2.append(str(e)))
-        await pg2.goto('file:///tmp/rtt/offline.html'); await pg2.click('#btnNewSample'); await pg2.click('#tabs button[data-v=route]')
-        await pg2.set_input_files('#fPages', '/home/claude/rt/test/e2e/page.png'); await pg2.click('#btnRead')
+        await pg2.goto('file://' + str(OUT / 'offline.html')); await pg2.click('#btnNewSample'); await pg2.click('#tabs button[data-v=route]')
+        await pg2.set_input_files('#fPages', PAGE); await pg2.click('#btnRead')
         print('offline Read ->', await pg2.inner_text('#mTitle'))
-        await pg2.screenshot(path='/tmp/rtt/22-offline-read.png')
-        await pg2.click('#mOk'); await pg2.screenshot(path='/tmp/rtt/23-chat.png')
+        await pg2.screenshot(path=str(OUT / '22-offline-read.png'))
+        await pg2.click('#mOk'); await pg2.screenshot(path=str(OUT / '23-chat.png'))
         print('offline ERRORS', e2)
         await b.close()
 asyncio.run(main())

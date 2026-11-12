@@ -5,7 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="theme-color" content="#0f1115">
+<meta name="theme-color" content="#0b5cad">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Route Table">
+<meta name="app-version" content="__APP_VERSION__">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <title>Rally Route Table</title>
 <style>
 :root{
@@ -172,6 +178,12 @@ body.focus .ac-head{padding-right:34px}
 #toast{position:fixed;left:50%;bottom:calc(16px + env(safe-area-inset-bottom));transform:translateX(-50%);background:#222;color:#fff;
   padding:10px 14px;border-radius:10px;font-size:14px;opacity:0;pointer-events:none;transition:opacity .2s;z-index:60;max-width:90vw}
 #toast.on{opacity:.95}
+#updBar{position:fixed;left:8px;right:8px;bottom:calc(8px + env(safe-area-inset-bottom));display:none;align-items:center;gap:10px;justify-content:space-between;
+  background:var(--panel);border:2px solid var(--accent);border-radius:12px;padding:8px 10px;z-index:55;box-shadow:0 4px 16px rgba(0,0,0,.2)}
+#updBar.on{display:flex}
+.reader{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 8px;align-items:end;margin-top:8px}
+.reader label{margin:0 0 2px}
+.thumbs figure button{min-height:28px;padding:0 6px;font-size:11px;margin-top:3px;width:100%}
 .banner{background:var(--new);border:1px solid var(--line);border-radius:var(--r);padding:8px 10px;font-size:14px;margin-bottom:10px}
 .steps{margin:0;padding-left:20px} .steps li{margin:3px 0}
 pre.io{white-space:pre-wrap;word-break:break-word;max-height:160px;overflow:auto;font-size:12px;background:var(--bg);padding:8px;border-radius:8px}
@@ -195,6 +207,7 @@ pre.io{white-space:pre-wrap;word-break:break-word;max-height:160px;overflow:auto
   <!-- RALLIES -->
   <section class="view" id="v-rallies"><div class="narrow">
     <div id="storageWarn"></div>
+    <div id="installSlot"></div>
     <div class="row" style="margin-bottom:12px">
       <button class="primary" id="btnNew">New rally</button>
       <button id="btnNewSample">New from sample</button>
@@ -219,6 +232,7 @@ pre.io{white-space:pre-wrap;word-break:break-word;max-height:160px;overflow:auto
 <div id="modal"><div class="box"><div id="mTitle" style="font-weight:700;margin-bottom:6px"></div><div id="mBody"></div>
   <div class="btns"><button id="mCancel">Cancel</button><button class="primary" id="mOk">OK</button></div></div></div>
 <div id="toast"></div>
+<div id="updBar"><span>A new version of the app is ready.</span><button id="btnUpd" class="primary">Reload</button></div>
 
 <script data-rt>
 /*CORE*/

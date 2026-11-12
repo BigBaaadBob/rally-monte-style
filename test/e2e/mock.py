@@ -1,7 +1,12 @@
 # Mocks the Claude runtime: db returns FROZEN snapshot data (as the real one does), sample returns rows.
 import asyncio, json, sys
 from playwright.async_api import async_playwright
-sys.path.insert(0, '/home/claude/rt')
+import pathlib
+HERE = pathlib.Path(__file__).resolve().parent
+APP = 'file://' + str(HERE.parents[1] / 'dist/index.html')   # run python3 build.py first
+PAGE = str(HERE / 'page.png')
+OUT = pathlib.Path('/tmp/rally-e2e'); OUT.mkdir(exist_ok=True)   # screenshots
+
 MOCK = r"""
 (() => {
   const deepFreeze = o => { Object.values(o).forEach(v => v && typeof v === 'object' && deepFreeze(v)); return Object.freeze(o); };
@@ -27,14 +32,14 @@ async def main():
         await ctx.add_init_script(f"window.__REMOTE__ = {json.dumps([remote])};" + MOCK)
         pg = await ctx.new_page(); errs=[]
         pg.on('pageerror', lambda e: errs.append('pageerror: '+str(e)))
-        await pg.goto('file:///home/claude/rt/dist/index.html'); await pg.evaluate('localStorage.clear()'); await pg.reload()
+        await pg.goto(APP); await pg.evaluate('localStorage.clear()'); await pg.reload()
         await pg.wait_for_function("document.getElementById('cloud').textContent.includes('account')", timeout=5000)
         await pg.click('[data-open="rCLOUD"]'); await pg.click('#tabs button[data-v=route]')
         # fake a photo
         png = await pg.evaluate("""(async()=>{const c=document.createElement('canvas');c.width=60;c.height=80;c.getContext('2d').fillRect(0,0,10,10);
             return await new Promise(r=>c.toBlob(b=>{const fr=new FileReader();fr.onload=()=>r(fr.result.split(',')[1]);fr.readAsDataURL(b)},'image/png'))})()""")
-        import base64; open('/home/claude/rt/test/e2e/page.png','wb').write(base64.b64decode(png))
-        await pg.set_input_files('#fPages', '/home/claude/rt/test/e2e/page.png')
+        import base64; open(PAGE,'wb').write(base64.b64decode(png))
+        await pg.set_input_files('#fPages', PAGE)
         await pg.click('#btnRead'); await pg.wait_for_selector('#modal.on', timeout=8000)
         print('dialog:', (await pg.inner_text('#mBody')).replace('\n',' | ')[:200])
         await pg.click('#mOk')

@@ -13,11 +13,19 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const fmtVM = v => v == null ? '' : v.toFixed(2);
 const now = () => Date.now();
 const LS_KEY = 'rallyRT.v1', LS_KEY_API = 'rallyRT.apikey';
+const APP_VERSION = (document.querySelector('meta[name="app-version"]') || {}).content || 'dev';
+// Models for reading pages with your own API key. Costs are rough per-page estimates (Nov 2026 list prices).
+const MODELS = [
+  { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5 (recommended, about 2¢/page)' },
+  { id: 'claude-haiku-5-5', label: 'Haiku 5.5 (cheapest, about 0.1¢/page)' },
+  { id: 'claude-opus-5-5', label: 'Opus 5.5 (most careful, about 7¢/page)' },
+];
+const OPUS = 'claude-opus-5-5';
 const SPEEDO_START = 35;            // default speedometer for a new rally (then saved with the rally)
 
 // ---------------------------------------------------------------- storage
 let lsOK = true;
-let store = { rallies: {}, cur: null, prefs: { theme: 'day', fmt: 'hms' } };
+let store = { rallies: {}, cur: null, prefs: { theme: 'day', fmt: 'hms', model: 'claude-sonnet-5-5' } };
 try {
   const raw = localStorage.getItem(LS_KEY);
   if (raw) { const s = JSON.parse(raw); store = { ...store, ...s, prefs: { ...store.prefs, ...(s.prefs || {}) } }; }
@@ -154,8 +162,28 @@ async function wake(on) {
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && view === 'run') wake(true); });
 
 // ---------------------------------------------------------------- RALLIES
+// ---------------------------------------------------------------- install (home-screen web app)
+const isInstalled = () => { try { return matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: fullscreen)').matches || navigator.standalone === true; } catch (e) { return false; } };
+const isIOS = () => /iPad|iPhone|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+const canInstall = () => !hasClaude && /^https:$/.test(location.protocol) && !isInstalled();
+let installEvt = null;                                   // Android/Chrome install prompt, when offered
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; if (view === 'rallies') renderRallies(); });
+window.addEventListener('appinstalled', () => { installEvt = null; if (view === 'rallies') renderRallies(); });
+function installHint() {
+  if (!canInstall()) return '';
+  const how = isIOS()
+    ? 'In Safari, tap <b>Share</b> → <b>Add to Home Screen</b> → <b>Add</b>.'
+    : installEvt ? 'Tap <b>Install</b>.' : 'In Chrome, open the <b>⋮</b> menu → <b>Install app</b> (or <b>Add to Home screen</b>).';
+  return `<div class="card" id="installCard"><h2>Install this app</h2>
+    <div class="small">${how} It then opens from its icon, full screen, and works with no internet.</div>
+    ${isIOS() ? '<div class="small muted" style="margin-top:6px">The installed app keeps its own storage, separate from Safari: set up your rallies in the installed app.</div>' : ''}
+    ${installEvt ? '<div class="row" style="margin-top:8px"><button class="primary" id="btnInstall">Install</button></div>' : ''}</div>`;
+}
+
 function renderRallies() {
   const list = Object.values(store.rallies).sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.updated - a.updated);
+  $('installSlot').innerHTML = installHint();
+  if ($('btnInstall')) $('btnInstall').onclick = async () => { const e = installEvt; installEvt = null; try { e.prompt(); await e.userChoice; } catch (err) {} renderRallies(); };
   $('rallyList').innerHTML = list.length ? list.map(r => {
     const done = r.rows.filter(x => x.done).length;
     return `<div class="card rally-item ${r.id === store.cur ? 'cur' : ''}">
@@ -258,17 +286,22 @@ function renderRoute() {
   $('routeBody').innerHTML = `
   <div class="card narrow" style="max-width:none">
     <h2>Read Route Instruction pages</h2>
-    <div class="small muted">${caps.sample ? 'Claude reads each photo (internet required). The first time, Claude asks your permission.'
-      : getApiKey() ? 'Standalone copy: photos are sent to the Anthropic API with the key saved on this device (Data tab).'
-      : 'This copy has no photo reader: add an Anthropic API key on the Data tab, or use “Read in a Claude chat…”.'}
-      If “Add page photos” does nothing (the Claude Android app), use “Read in a Claude chat…”.</div>
+    <div class="small muted">${caps.sample ? 'Claude reads each photo (internet required). The first time, Claude asks your permission. If “Add page photos” does nothing (the Claude Android app), use “Read in a Claude chat…”.'
+      : getApiKey() ? 'Photos are sent to the Anthropic API with the key saved on this device. Internet is needed only for reading.'
+      : 'To read photos, enter your Anthropic API key below (kept only on this device), or use “Read in a Claude chat…”.'}</div>
+    ${caps.sample ? '' : `<div class="reader">
+      <div><label for="fKey">Anthropic API key</label><input id="fKey" type="password" autocomplete="off" placeholder="${getApiKey() ? '•••••••• saved — type to replace' : 'sk-ant-…'}"></div>
+      <button id="bKey">${getApiKey() ? 'Replace' : 'Save'}</button>
+      <div style="grid-column:1/-1"><label for="fModel">Model for reading</label><select id="fModel">${MODELS.map(m => `<option value="${m.id}" ${store.prefs.model === m.id ? 'selected' : ''}>${m.label}</option>`).join('')}</select></div>
+    </div>`}
     <div class="row" style="margin-top:8px">
       <span class="filebtn primary">Add page photos<input type="file" id="fPages" accept="image/*" multiple aria-label="Add page photos"></span>
       <button id="btnRead" ${pages.some(p => p.state !== 'ok') ? '' : 'disabled'}>Read ${pages.filter(p => p.state !== 'ok').length || ''} page(s)</button>
       <button id="btnChat">Read in a Claude chat…</button>
       ${pages.length ? '<button id="btnClearPages">Clear photos</button>' : ''}
     </div>
-    <div class="thumbs">${pages.map((p, i) => `<figure class="${p.state}"><img src="${p.url}" alt="page ${i + 1}"><figcaption>${esc(p.msg || p.file.name)}</figcaption></figure>`).join('')}</div>
+    <div class="thumbs">${pages.map((p, i) => `<figure class="${p.state}"><img src="${p.url}" alt="page ${i + 1}"><figcaption>${esc(p.msg || p.file.name)}</figcaption>
+      ${!caps.sample && getApiKey() && (p.state === 'ok' || p.state === 'bad') && p.model !== OPUS ? `<button data-opus="${i}" title="Read this page again with Opus 5.5">Re-read: Opus</button>` : ''}</figure>`).join('')}</div>
   </div>
   <div class="row" style="margin-bottom:8px">
     <strong>${r.rows.length} RIs</strong>
@@ -297,9 +330,18 @@ function renderRoute() {
   };
   if ($('btnClearPages')) $('btnClearPages').onclick = () => { pages.forEach(p => URL.revokeObjectURL(p.url)); pages = []; renderRoute(); };
   if ($('btnRead')) $('btnRead').onclick = () => canOCR ? readPages() : confirmBox('No photo reader here',
-    `This copy of the app is not running inside Claude, so it needs an Anthropic API key to read photos (Data tab → Anthropic API key).<br><br>
+    `Reading photos needs your Anthropic API key: enter it in the box above. It stays on this device.<br><br>
      Without a key, use <b>Read in a Claude chat…</b>: Claude reads the photos in a chat and you paste the result here.`,
     'Read in a Claude chat…', () => { chatRead(); }, 'Close');
+  if ($('bKey')) $('bKey').onclick = () => {
+    const k = $('fKey').value.trim();
+    if (!k) { toast(getApiKey() ? 'Type a new key to replace the saved one' : 'Paste your API key first'); return; }
+    if (!/^sk-ant-/.test(k)) { toast('That does not look like an Anthropic API key (sk-ant-…)'); return; }
+    try { localStorage.setItem(LS_KEY_API, k); toast('Key saved on this device'); } catch (e) { toast('Could not save the key on this device'); }
+    renderRoute();
+  };
+  if ($('fModel')) $('fModel').onchange = e => { store.prefs.model = e.target.value; save(); };
+  document.querySelectorAll('#routeBody [data-opus]').forEach(b => b.onclick = () => readPages([+b.dataset.opus], OPUS));
   $('btnChat').onclick = chatRead;
   $('btnAdd').onclick = () => {
     const last = r.rows[r.rows.length - 1];
@@ -372,7 +414,7 @@ async function prepImage(file) {
 }
 const blobToB64 = b => new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(',')[1]); fr.onerror = rej; fr.readAsDataURL(b); });
 
-async function ocrOne(blob) {
+async function ocrOne(blob, model) {
   if (caps.sample) {
     const out = await caps.sample(OCR_PROMPT, { images: [blob], modelTier: 'complex', cache: false });
     return Core.parseOCR(out.text);
@@ -382,26 +424,33 @@ async function ocrOne(blob) {
   try { resp = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-    body: JSON.stringify({ model: 'claude-opus-5-5', max_tokens: 8000, messages: [{ role: 'user', content: [
+    body: JSON.stringify({ model, max_tokens: model === OPUS ? 16000 : 8000, messages: [{ role: 'user', content: [
       { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: await blobToB64(blob) } },
       { type: 'text', text: OCR_PROMPT }] }] }),
   }); } catch (e) { throw new Error('Could not reach the Anthropic API (' + (e.message || 'network error') + '). Check the internet connection.'); }
-  if (!resp.ok) throw new Error(resp.status === 401 ? 'The API key was rejected (401). Check it on the Data tab.' : 'API ' + resp.status + ': ' + (await resp.text()).slice(0, 160));
+  if (!resp.ok) throw new Error(resp.status === 401 ? 'The API key was rejected (401). Check it on the Route tab.' : resp.status === 402 || resp.status === 403 ? 'The API refused the request (' + resp.status + '). Check the account has credit and the key is allowed to use ' + model + '.' : 'API ' + resp.status + ': ' + (await resp.text()).slice(0, 160));
   const j = await resp.json();
+  if (j.stop_reason === 'max_tokens') throw new Error('The reply was cut off (page too long). Try Re-read: Opus, or split the photo.');
   return Core.parseOCR((j.content || []).filter(c => c.type === 'text').map(c => c.text).join(''));
 }
 
 let reading = false;
-async function readPages() {
+const modelName = id => ({ 'claude-sonnet-5-5': 'Sonnet', 'claude-haiku-5-5': 'Haiku', 'claude-opus-5-5': 'Opus' }[id] || id);
+// Read the given pages (default: every page not yet read) with the chosen model.
+async function readPages(only, model) {
   if (reading) return; reading = true; newSet.clear();
+  model = model || store.prefs.model || MODELS[0].id;
   const msgs = [];
   for (let i = 0; i < pages.length; i++) {
-    const p = pages[i]; if (p.state === 'ok') continue;
-    p.state = 'busy'; p.msg = 'Reading…'; renderRoute();
+    const p = pages[i];
+    if (only ? !only.includes(i) : p.state === 'ok') continue;
+    p.state = 'busy'; p.msg = caps.sample ? 'Reading…' : `Reading (${modelName(model)})…`; renderRoute();
     try {
-      const rows = await ocrOne(await prepImage(p.file));
-      if (!rows.length) { p.state = 'bad'; p.msg = 'No RIs found'; }
-      else { const s = mergeIntoRally(rows, `Page ${i + 1}`); p.state = 'ok'; p.msg = `${rows.length} RIs`; msgs.push(s); }
+      const rows = await ocrOne(await prepImage(p.file), model);
+      p.model = caps.sample ? null : model;
+      const by = caps.sample ? '' : ` · ${modelName(model)}`;
+      if (!rows.length) { p.state = 'bad'; p.msg = 'No RIs found' + by; }
+      else { const s = mergeIntoRally(rows, `Page ${i + 1}${by}`); p.state = 'ok'; p.msg = `${rows.length} RIs${by}`; msgs.push(s); }
     } catch (e) {
       p.state = 'bad'; p.msg = e && e.code === 'not_granted' ? 'Not allowed' : 'Failed';
       msgs.push(`Page ${i + 1}: ${e && (e.message || e.code) || 'failed'}`);
@@ -694,9 +743,12 @@ function renderData() {
   </div>
   <div class="card"><h3>Offline copy</h3>
     <div class="row"><button id="xApp">Download app as HTML file</button></div>
-    <div class="small muted" style="margin-top:6px">Inside Claude, open this page before you lose signal and keep it open; it needs no internet once loaded. The HTML file is a standalone copy for a phone or laptop browser; its saved rallies stay in that browser.</div>
-    ${!caps.sample ? `<label for="fKey">Anthropic API key (standalone copy only, for reading photos; kept on this device, never exported)</label>
-      <div class="row"><input id="fKey" type="password" value="${esc(getApiKey())}" autocomplete="off" style="flex:1"><button id="bKey">Save key</button></div>` : ''}
+    <div class="small muted" style="margin-top:6px">${hasClaude
+      ? 'Inside Claude, open this page before you lose signal and keep it open; it needs no internet once loaded.'
+      : isInstalled() ? 'Installed: this app opens and runs with no internet.' : 'Install this app to your home screen (see the Rallies tab) so it opens with no internet.'}
+      The HTML file is a single-file copy for another browser; its saved rallies stay in that browser.</div>
+    ${!caps.sample && getApiKey() ? `<div class="row" style="margin-top:8px"><button id="bKeyDel" class="danger">Remove saved API key from this device</button></div>` : ''}
+    <div class="small muted" style="margin-top:8px">App version ${esc(APP_VERSION)}</div>
   </div>
   <div class="card"><h3>Reset or delete</h3>
     <div class="row"><button id="bResetRun" ${done || tas.length ? '' : 'disabled'}>Clear completion marks and TAs</button>
@@ -720,7 +772,7 @@ function renderData() {
       store.rallies[nr.id] = nr; store.cur = nr.id; save(nr); toast('Imported ' + (nr.name || 'rally')); renderAll();
     } catch (err) { toast('That file is not a rally JSON export'); }
   };
-  if ($('bKey')) $('bKey').onclick = () => { try { localStorage.setItem(LS_KEY_API, $('fKey').value.trim()); toast('Key saved on this device'); } catch (e) { toast('Could not save the key'); } };
+  if ($('bKeyDel')) $('bKeyDel').onclick = () => confirmBox('Remove API key', 'Remove the saved Anthropic API key from this device?', 'Remove', () => { try { localStorage.removeItem(LS_KEY_API); } catch (e) {} renderData(); });
   $('bResetRun').onclick = () => confirmBox('Clear run data', 'Clear all completion marks, time adjustments, and estimate toggles? The route table stays.', 'Clear', () => {
     r.rows = r.rows.map(x => ({ ...x, done: false, ttDone: null, doneAt: null, estLock: null, estLockBy: null })); r.taEvents = []; save(r); renderData();
   });
@@ -742,6 +794,28 @@ applyTheme();
   renderCloud(); renderStorageWarn();
 })();
 window.addEventListener('hashchange', () => { const h = location.hash.slice(1); if (h && h !== view && ['rallies', 'setup', 'route', 'run', 'data'].includes(h)) show(h); });
+// ---------------------------------------------------------------- offline cache (hosted app only)
+(function registerSW() {
+  if (hasClaude || !('serviceWorker' in navigator) || !/^https:$|^http:$/.test(location.protocol)) return;
+  if (location.protocol === 'http:' && !/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) return;
+  // Reload only when the user asked for the new version (a first install also changes the controller).
+  let wantReload = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (wantReload) { wantReload = false; location.reload(); } });
+  const offer = w => {
+    $('updBar').classList.add('on');
+    $('btnUpd').onclick = () => { $('updBar').classList.remove('on'); wantReload = true; w.postMessage('skipWaiting'); };
+  };
+  navigator.serviceWorker.register('sw.js').then(reg => {
+    if (reg.waiting && navigator.serviceWorker.controller) offer(reg.waiting);
+    reg.addEventListener('updatefound', () => {
+      const w = reg.installing;
+      w && w.addEventListener('statechange', () => { if (w.state === 'installed' && navigator.serviceWorker.controller) offer(w); });
+    });
+    // look for a new version when the app comes back to the foreground (never forces a reload)
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => {}); });
+  }).catch(() => {});
+})();
+
 (async () => {
   caps.sample = await useCap('sample');
   if (caps.sample) { try { const lim = await caps.sample.limits(); if (!lim || !lim.images) caps.sample = null; } catch (e) {} }

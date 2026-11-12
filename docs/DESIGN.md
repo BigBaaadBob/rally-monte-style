@@ -1,4 +1,4 @@
-# Rally Route Table app — design decisions (v7, 2026-11-11)
+# Rally Route Table app — design decisions (v8, 2026-11-12)
 
 Moved from the claude.ai "Road Rally" Project. The app was first delivered as a claude.ai artifact (https://claude.ai/artifact/Qbn4NCJ7cbjtt3MRpB2ho5); this repository is now the source of truth.
 
@@ -44,7 +44,18 @@ Moved from the claude.ai "Road Rally" Project. The app was first delivered as a 
 - Node unit tests for the core; Playwright runs at 390/360 px portrait and 844 px landscape.
 - A mock of the Claude runtime (frozen db snapshots plus a sample reader) covers the account-copy and photo-merge path; a simulated injected CSP checks the offline copy.
 
-## Planned (hosting move, agreed 2026-11-12)
-- Host on GitHub Pages as an installable web app (manifest + service worker) so it opens offline on Android, iPhone, and iPad.
-- Capture pages with the browser's photo button; read them with the user's Anthropic API key. Default model Sonnet 5.5, selectable, with a "re-read with Opus" option. Run a one-time comparison on a full 18-page rally.
-- Open items: validate photo reading on the full 18-page set.
+## Hosting and install (v8)
+- Hosted on GitHub Pages at https://bigbaaadbob.github.io/rally-monte-style/. Every push to `main` builds, runs the unit tests, and publishes only if they pass (`.github/workflows/pages.yml`).
+- Installable web app: `manifest.webmanifest` (standalone display, icons) and `sw.js`.
+- `sw.js` caches the app's own files, so the installed app opens and reloads with no signal. Requests to other sites (the Anthropic API) are never intercepted.
+- Each build stamps a version into `sw.js` and the page (shown on the Data tab).
+- Updates: when a new version is published, the app shows "A new version of the app is ready — Reload". It never reloads by itself, including on first install, so a rally in progress is never interrupted.
+- The Rallies tab shows install steps when the app is opened in a browser rather than installed: the Android Install button when Chrome offers one, and Share → Add to Home Screen on iPhone/iPad, with a note that the installed app's storage is separate from Safari's.
+- The same `dist/index.html` still works as a claude.ai artifact (no offline cache there; Claude's own reader is used).
+
+## Reading pages (v8)
+- Outside claude.ai, pages are read with the user's Anthropic API key, entered on the Route tab and stored only in that device's local storage. It is never exported or committed. The Data tab can remove it.
+- Model picker (saved per device): Sonnet 5.5 (default, about 2¢/page), Haiku 5.5 (about 0.1¢/page), Opus 5.5 (about 7¢/page). Estimates use Nov 2026 list prices and an image of about 3,900 tokens at 2,000 px.
+- Each page thumbnail shows which model read it, and offers "Re-read: Opus" for a page that needs a second look. Re-reading merges by RI, replacing that page's rows.
+- Errors name the cause: no network, key rejected (401), refused (402/403: credit or model access), or reply cut off.
+- Open item: run a full 18-page rally through all three models once and compare against the paper.
