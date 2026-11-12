@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0f1115">
+<title>Rally Route Table</title>
+<style>
+:root{
+  --bg:#f6f6f3; --panel:#ffffff; --ink:#111; --muted:#5d6168; --line:#d9dad5; --accent:#0b5cad; --accent-ink:#fff;
+  --active:#fff3b0; --active-line:#c99a00; --done:#eef3ee; --done-ink:#6b766b; --ok:#1f7a35; --warn:#a33a00; --restart:#6a1b9a;
+  --new:#dff0ff; --est:#7a4b00; --input:#fff; --close:#ffe3c9; --close-line:#e8a060; --close-ink:#8a3a00;
+  --r:10px; --tap:46px;
+}
+html[data-theme="night"]{
+  --bg:#0f1115; --panel:#171a20; --ink:#f1e6e0; --muted:#a59a95; --line:#2b2f37; --accent:#c4472b; --accent-ink:#fff;
+  --active:#3a2a10; --active-line:#e0a020; --done:#151a16; --done-ink:#7f8a80; --ok:#5bbf72; --warn:#ff8a5c; --restart:#d79cf2;
+  --new:#132638; --est:#f0c060; --input:#0f1115; --close:#4a2a12; --close-line:#c06a2a; --close-ink:#ffb27a;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+  font:16px/1.35 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-text-size-adjust:100%}
+body{display:flex;flex-direction:column;height:100dvh;
+  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+.num{font-variant-numeric:tabular-nums}
+button{font:inherit;color:inherit;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);
+  min-height:var(--tap);padding:0 14px;cursor:pointer;touch-action:manipulation}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+button.danger{color:var(--warn);border-color:var(--warn)}
+button:disabled{opacity:.45;cursor:default}
+input,select,textarea{font:inherit;color:var(--ink);background:var(--input);border:1px solid var(--line);border-radius:8px;
+  min-height:40px;padding:6px 10px;width:100%}
+label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
+h2{font-size:18px;margin:4px 0 10px} h3{font-size:15px;margin:16px 0 6px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.muted{color:var(--muted)} .small{font-size:13px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;margin-bottom:12px}
+
+/* header + tabs */
+header{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--line);background:var(--panel)}
+header .title{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
+header .title .sub{font-weight:400;color:var(--muted);font-size:13px;margin-left:6px}
+#cloud{font-size:12px;color:var(--muted);white-space:nowrap}
+nav{display:flex;border-bottom:1px solid var(--line);background:var(--panel)}
+nav button{flex:1;border:0;border-radius:0;background:transparent;min-height:42px;font-size:14px;color:var(--muted);
+  border-bottom:3px solid transparent;padding:0 4px}
+nav button.on{color:var(--ink);border-bottom-color:var(--accent);font-weight:600}
+nav .phase{font-size:10px;display:block;letter-spacing:.06em;text-transform:uppercase;line-height:1}
+main{flex:1;min-height:0;position:relative}
+.view{position:absolute;inset:0;overflow:auto;padding:12px;display:none;-webkit-overflow-scrolling:touch}
+.view.on{display:block}
+.narrow{max-width:760px;margin:0 auto}
+
+/* rallies list */
+.rally-item{display:flex;align-items:center;gap:10px}
+.rally-item .grow{flex:1;min-width:0}
+.rally-item .name{font-weight:600}
+.rally-item.cur{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+
+/* tables */
+.tablewrap{overflow:auto;border:1px solid var(--line);border-radius:var(--r);background:var(--panel)}
+table{border-collapse:separate;border-spacing:0;width:100%}
+th,td{padding:7px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{position:sticky;top:0;background:var(--panel);z-index:2;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}
+td.n,th.n{text-align:right;white-space:nowrap}
+/* route editor */
+#rtEdit td{padding:3px}
+#rtEdit input{min-height:36px;padding:4px 6px;border-radius:6px}
+#rtEdit td.c-ri input{width:68px} #rtEdit td.c-om input{width:84px} #rtEdit td.c-czt input{width:104px}
+#rtEdit td.c-cp input{width:54px} #rtEdit td.c-instr input{min-width:220px} #rtEdit td.c-info input{min-width:160px}
+#rtEdit tr.new td{background:var(--new)}
+#rtEdit tr.flag td.c-ri{box-shadow:inset 4px 0 var(--warn)}
+#rtEdit tr.rs td{border-top:2px solid var(--restart)}
+#rtEdit button.x{min-height:36px;padding:0 10px}
+.flags{color:var(--warn);font-size:13px;margin:6px 0}
+.thumbs{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
+.thumbs figure{margin:0;width:78px;font-size:11px;text-align:center;color:var(--muted)}
+.thumbs img{width:78px;height:100px;object-fit:cover;border-radius:6px;border:1px solid var(--line);display:block}
+.thumbs figure.ok img{border-color:var(--ok)} .thumbs figure.bad img{border-color:var(--warn)}
+
+/* run view */
+#v-run.on{display:flex;flex-direction:column;gap:10px;overflow:hidden;padding-left:8px;padding-right:8px}
+.runtop{flex:none}
+.runtable{flex:1;min-height:0}
+.active-card{background:var(--panel);border:2px solid var(--active-line);border-radius:14px;padding:10px 12px}
+.ac-head{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.ac-ri{font-size:22px;font-weight:700}
+.badge{display:inline-block;font-size:12px;font-weight:700;padding:2px 7px;border-radius:999px;border:1px solid currentColor;letter-spacing:.03em}
+.badge.rs{color:var(--restart)} .badge.cp{color:var(--accent)} .badge.ta{color:var(--warn)}
+.ac-nums{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:6px 0}
+.ac-nums .lbl{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.ac-nums .big{font-size:clamp(30px,9vw,46px);font-weight:700;line-height:1.05}
+.ac-nums .big.est{color:var(--est);font-style:italic}
+.ac-instr{font-size:17px;font-weight:600}
+.ac-info{font-size:14px;color:var(--muted)}
+.ac-next{font-size:13px;color:var(--muted);margin-top:6px;border-top:1px dashed var(--line);padding-top:6px}
+.ac-btns{display:grid;grid-template-columns:1fr 2.2fr;gap:8px;margin-top:10px;align-items:end}
+.ac-btns button{min-height:44px;font-size:15px}
+.ac-btns button.primary{min-height:58px;font-size:18px}
+.ctl{display:flex;margin-top:8px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:3px}
+.ctl .grp{min-width:0}
+.ctl .grp.ta{flex:0 0 auto;padding-right:5px}
+.ctl .grp.sp{flex:1 1 0;border-left:1px solid var(--line);padding-left:5px}
+#btnTA{min-height:44px;margin-top:2px;padding:0 10px;font-size:17px;min-width:84px}
+#btnTA.ta-on{color:var(--warn);border-color:var(--warn);font-weight:700}
+.tagrid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.tagrid button{min-height:52px;font-size:18px}
+.filebtn{position:relative;overflow:hidden;display:inline-flex;align-items:center;min-height:var(--tap);padding:0 14px;border-radius:var(--r);
+  border:1px solid var(--line);background:var(--panel);cursor:pointer}
+.filebtn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+.filebtn input[type=file]{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;font-size:200px;min-height:0;padding:0;border:0}
+.iconbtn{min-height:36px;padding:0 10px;font-size:18px;line-height:1}
+#btnFSx{display:none;position:fixed;top:calc(4px + env(safe-area-inset-top));right:calc(4px + env(safe-area-inset-right));z-index:40;
+  min-height:32px;width:32px;padding:0;border-radius:50%;opacity:.75;font-size:14px}
+body.focus header,body.focus nav{display:none}
+body.focus #btnFSx{display:block}
+body.focus .ac-head{padding-right:34px}
+.ctl .lbl{font-size:11px;color:var(--muted);line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-left:2px}
+/* steppers: one line, tight buttons; input font stays 16px so iOS does not zoom on focus */
+.stepper{display:flex;gap:2px;margin-top:2px;align-items:stretch}
+.stepper button{min-height:44px;padding:0;min-width:0;flex:1 1 0;font-size:15px;border-radius:8px}
+.stepper input{flex:none;width:50px;min-height:44px;padding:0;text-align:center;font-size:16px;border-radius:7px}
+.stepper:has(input:focus) input{flex:1 1 auto}
+
+.stepper .set{display:none;flex:0 0 auto;padding:0 10px;background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+.stepper:has(input:focus) button[data-ta],.stepper:has(input:focus) button[data-sp]{display:none}
+.stepper:has(input:focus) .set{display:block}
+#runTbl td{font-size:15px;padding:6px 5px}
+#runTbl th{padding:6px 5px}
+#runTbl td.chk,#runTbl td:nth-child(2),#runTbl td.vm,#runTbl td.tt{width:1%;white-space:nowrap}
+#runTbl td.vm,#runTbl th:nth-child(3){padding-left:2px}
+#runTbl td.instr{width:auto}
+#runTbl tr.active td{background:var(--active)}
+#runTbl tr.active td:first-child{box-shadow:inset 5px 0 var(--active-line)}
+#runTbl tr.done td{background:var(--done);color:var(--done-ink)}
+#runTbl tr.rs td{border-top:3px solid var(--restart)}
+#runTbl td.chk{width:40px;text-align:center;font-size:18px;padding:4px}
+#runTbl td.chk span{display:inline-block;width:30px;height:30px;line-height:28px;border-radius:50%;border:2px solid var(--line)}
+#runTbl tr.done td.chk span{background:var(--ok);border-color:var(--ok);color:#fff;cursor:pointer}
+#runTbl tr.close td.vm{background:var(--close);box-shadow:inset 0 0 0 1px var(--close-line)}
+#runTbl tr.active.close td.vm{background:var(--close)}
+.badge.close{color:var(--close-ink);background:var(--close)}
+#runTbl td.tt .est{color:var(--est);font-style:italic}
+#runTbl td.tt .tamark{color:var(--warn);font-size:11px;margin-left:2px}
+#runTbl .instr .info{color:var(--muted);font-size:13px}
+#runTbl tr.done .instr .info{color:inherit}
+.col-wide{display:none}
+.progress{font-size:13px;color:var(--muted)}
+
+@media (orientation:landscape) and (min-width:640px){
+  #v-run.on{display:grid;grid-template-columns:minmax(370px,45%) 1fr;grid-template-rows:1fr;gap:10px}
+  .runtop{overflow:auto;min-height:0}
+  .runtable{height:100%}
+  .col-wide{display:table-cell}
+  .ac-nums .big{font-size:clamp(28px,4.6vw,48px)}
+}
+@media (orientation:landscape) and (max-height:500px){
+  header{padding:3px 10px} nav button{min-height:32px} nav .phase{display:none} .view{padding:6px 8px}
+  .ac-btns button{min-height:46px} .ac-next{display:none} .ac-instr{font-size:15px} .ac-info{font-size:13px}
+  .ac-nums{margin:2px 0} .ac-nums .big{font-size:clamp(26px,4.2vw,40px)} .active-card{padding:8px 10px}
+}
+@media (orientation:portrait) and (max-height:760px){ .ac-next{display:none} .ac-instr{font-size:15px} }
+
+/* dialog + toast */
+#modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;z-index:50;padding:20px}
+#modal.on{display:flex}
+#modal .box{background:var(--panel);border-radius:14px;padding:16px;max-width:420px;width:100%;border:1px solid var(--line)}
+#modal .btns{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
+#toast{position:fixed;left:50%;bottom:calc(16px + env(safe-area-inset-bottom));transform:translateX(-50%);background:#222;color:#fff;
+  padding:10px 14px;border-radius:10px;font-size:14px;opacity:0;pointer-events:none;transition:opacity .2s;z-index:60;max-width:90vw}
+#toast.on{opacity:.95}
+.banner{background:var(--new);border:1px solid var(--line);border-radius:var(--r);padding:8px 10px;font-size:14px;margin-bottom:10px}
+.steps{margin:0;padding-left:20px} .steps li{margin:3px 0}
+pre.io{white-space:pre-wrap;word-break:break-word;max-height:160px;overflow:auto;font-size:12px;background:var(--bg);padding:8px;border-radius:8px}
+</style>
+</head>
+<body>
+<header>
+  <div class="title" id="hdrTitle">Rally Route Table</div>
+  <span id="cloud" title="Storage status">Local</span>
+  <button id="btnFS" class="iconbtn" title="Full screen" aria-label="Full screen">⛶</button>
+</header>
+<button id="btnFSx" title="Exit full screen" aria-label="Exit full screen">✕</button>
+<nav id="tabs">
+  <button data-v="rallies">Rallies</button>
+  <button data-v="setup"><span class="phase">Prep</span>Setup</button>
+  <button data-v="route"><span class="phase">Prep</span>Route</button>
+  <button data-v="run"><span class="phase">Run</span>Run</button>
+  <button data-v="data">Data</button>
+</nav>
+<main>
+  <!-- RALLIES -->
+  <section class="view" id="v-rallies"><div class="narrow">
+    <div id="storageWarn"></div>
+    <div class="row" style="margin-bottom:12px">
+      <button class="primary" id="btnNew">New rally</button>
+      <button id="btnNewSample">New from sample</button>
+    </div>
+    <div id="rallyList"></div>
+    <p class="small muted">Rallies are saved on this device after every change. When this page runs inside Claude and you are online, a private copy is also kept in your account so you can review it after the event.</p>
+  </div></section>
+
+  <!-- SETUP -->
+  <section class="view" id="v-setup"><div class="narrow" id="setupBody"></div></section>
+
+  <!-- ROUTE -->
+  <section class="view" id="v-route"><div id="routeBody"></div></section>
+
+  <!-- RUN -->
+  <section class="view" id="v-run"></section>
+
+  <!-- DATA -->
+  <section class="view" id="v-data"><div class="narrow" id="dataBody"></div></section>
+</main>
+
+<div id="modal"><div class="box"><div id="mTitle" style="font-weight:700;margin-bottom:6px"></div><div id="mBody"></div>
+  <div class="btns"><button id="mCancel">Cancel</button><button class="primary" id="mOk">OK</button></div></div></div>
+<div id="toast"></div>
+
+<script data-rt>
+/*CORE*/
+</script>
+<script data-rt>
+/*SAMPLE*/
+</script>
+<script data-rt>
+/*APP*/
+</script>
+</body>
+</html>
