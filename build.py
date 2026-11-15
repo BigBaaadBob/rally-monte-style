@@ -18,20 +18,20 @@ def version():
     return f"{stamp}-{sha or 'local'}"
 
 VERSION = version()
-html = (d / 'src/app.html').read_text()
+html = (d / 'src/app.html').read_text(encoding='utf-8')
 for tag, f in (('/*CORE*/', 'src/core.js'), ('/*SAMPLE*/', 'src/sample.js'), ('/*APP*/', 'src/app.js')):
-    code = (d / f).read_text()
+    code = (d / f).read_text(encoding='utf-8')
     assert '</script' not in code.lower(), f
     html = html.replace(tag, code, 1)
 html = html.replace('__APP_VERSION__', VERSION)
 
 if dist.exists(): shutil.rmtree(dist)
 (dist / 'icons').mkdir(parents=True)
-(dist / 'index.html').write_text(html)
+(dist / 'index.html').write_text(html, encoding='utf-8')
 shutil.copy(d / 'web/manifest.webmanifest', dist)
 for p in (d / 'web/icons').glob('*.png'): shutil.copy(p, dist / 'icons')
 assets = ['./', 'index.html', 'manifest.webmanifest'] + sorted('icons/' + p.name for p in (dist / 'icons').glob('*.png'))
-sw = (d / 'web/sw.js').read_text().replace('__VERSION__', VERSION).replace('__ASSETS__', json.dumps(assets))
-(dist / 'sw.js').write_text(sw)
+sw = (d / 'web/sw.js').read_text(encoding='utf-8').replace('__VERSION__', VERSION).replace('__ASSETS__', json.dumps(assets))
+(dist / 'sw.js').write_text(sw, encoding='utf-8')
 (dist / '.nojekyll').write_text('')
 print(f'built {VERSION}: index.html {len(html)} bytes, {len(assets)} cached assets')
