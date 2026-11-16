@@ -69,6 +69,22 @@ async def main():
         await pg.click('#btnPaste'); await pg.fill('#pasteBox', CSV); await pg.click('#mOk')
         added = await pg.evaluate("R().rows.filter(r => r.ri >= 210).map(r => r.ri + ':' + r.instr).join(' | ')")
         check(added == '210:R at [sign] | 211:CHECKPOINT', f'CSV lines are added with their instruction text ({added})')
+        # DESIGN Scope: the app's table is called Route Instructions in the UI (never Route Table, RT, or RIs).
+        check(await pg.inner_text('#btnClearRT') == 'Clear Route Instructions', 'the Route tab clear button says "Clear Route Instructions"')
+        check('Route Instructions' in await pg.inner_text('#routeBody strong'), 'the Route tab count says Route Instructions')
+        # DESIGN Getting the Route Instructions in: Paste rows accepts a CSV exported by the app and restores the same rows.
+        PROPS = "R().rows.map(r => { const n = Core.normRow(r); return [n.ri, n.om, n.restart, n.czt, n.cp, n.instr, n.info]; })"
+        rows_exported = await pg.evaluate(PROPS)
+        csv_text = await pg.evaluate('Core.toCSV(R(), store.prefs.fmt)')
+        await pg.click('#btnClearRT')
+        check(await pg.inner_text('#mTitle') == 'Clear Route Instructions', 'the clear dialog is titled "Clear Route Instructions"')
+        await pg.click('#mOk')
+        check(await pg.evaluate('R().rows.length') == 0, 'Clear Route Instructions empties the table')
+        await pg.click('#tabs button[data-v=run]')
+        check('No Route Instructions yet' in await pg.inner_text('#v-run'), 'the Run empty state says "No Route Instructions yet"')
+        await pg.click('#tabs button[data-v=route]')
+        await pg.click('#btnPaste'); await pg.fill('#pasteBox', csv_text); await pg.click('#mOk')
+        check(await pg.evaluate(PROPS) == rows_exported and len(rows_exported) > 0, f'an exported CSV re-imports the same {len(rows_exported)} rows through Paste rows')
         # offline copy runs standalone; Read explains the API key (DESIGN l.38)
         pg2 = await (await b.new_context(viewport={'width':390,'height':844})).new_page(); capture_errors(pg2, label='offline copy')
         await pg2.goto((OUT_DIR / 'offline.html').as_uri()); await pg2.click('#btnNewSample'); await pg2.click('#tabs button[data-v=route]')

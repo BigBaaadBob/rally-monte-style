@@ -1,13 +1,9 @@
-# rally-monte-style
+# Rally: Monte Style
 
-Tools to help during a Monte Carlo Style SCCA rally.
-
-The first tool is a Route Table app for SCCA Monte Carlo–style (TDS) RoadRallies.
-
-It builds the route table from photos of the Route Instruction pages, then adds:
+Rally: Monte Style is an installable web app for SCCA Monte Carlo–style (TDS) RoadRallies. It reads photos of the Route Instruction pages into a table of Route Instructions, then adds:
 
 - **VM** (vehicle miles = OM × OCF)
-- **TT** (target time = CZT + car number in minutes + time adjustment)
+- **TT** (target time = CZT + car number in minutes + time allowance (TA))
 
 It also estimates TT for rows that have no CZT, from your speedometer setting. During the rally it runs offline on a phone or tablet.
 

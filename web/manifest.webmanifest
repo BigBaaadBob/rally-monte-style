@@ -1,7 +1,7 @@
 {
-  "name": "Rally Route Table",
-  "short_name": "Route Table",
-  "description": "Route table, target times, and estimates for SCCA Monte Carlo-style rallies.",
+  "name": "Rally: Monte Style",
+  "short_name": "Monte Style",
+  "description": "Route Instructions, target times, and estimates for SCCA Monte Carlo-style rallies.",
   "id": "./",
   "start_url": "./",
   "scope": "./",

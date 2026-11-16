@@ -42,6 +42,11 @@ async def main():
             await pg.goto(url); await pg.evaluate('localStorage.clear()')
             await pg.wait_for_function('navigator.serviceWorker.ready.then(() => true)')
             await pg.reload(); await pg.wait_for_function('!!navigator.serviceWorker.controller')
+            # DESIGN Hosting and install: app name `Rally: Monte Style`, short_name `Monte Style`.
+            man = await pg.evaluate("fetch(document.querySelector('link[rel=manifest]').href).then(r => r.json())")
+            check(man['name'] == 'Rally: Monte Style', f"manifest name is Rally: Monte Style ({man['name']!r})")
+            check(man['short_name'] == 'Monte Style', f"manifest short_name is Monte Style ({man['short_name']!r})")
+            check(await pg.title() == 'Rally: Monte Style', f'document.title is Rally: Monte Style ({await pg.title()!r})')
             print('version:', await pg.evaluate('APP_VERSION'))
             # DESIGN l.50: sw.js caches the app's own files, so the installed app opens and reloads offline.
             check(await pg.evaluate('!!navigator.serviceWorker.controller'), 'the service worker controls the page')

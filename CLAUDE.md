@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A Route Table app for SCCA Monte Carlo–style (TDS) road rallies. It is a single-page, offline-capable PWA written in plain JavaScript, with no framework, no npm dependencies and no bundler. It builds a route table from photos of Route Instruction pages, which are read by Claude. It then computes VM (vehicle miles) and TT (target time), and estimates TT for rows that have no CZT. `docs/DESIGN.md` is the authoritative spec for behavior. Read it before changing any computation or Run-screen behavior.
+Rally: Monte Style is a single-page, offline-capable PWA for SCCA Monte Carlo–style (TDS) road rallies. It reads photos of Route Instruction pages into a table of Route Instructions. The pages are read by Claude. The app is written in plain JavaScript, with no framework, no npm dependencies and no bundler. It then computes VM (vehicle miles) and TT (target time), and estimates TT for rows that have no CZT. `docs/DESIGN.md` is the authoritative spec for behavior. Read it before changing any computation or Run-screen behavior.
 
 ## Python
 
@@ -67,7 +67,7 @@ Merging is done by the owner on GitHub after review.
 Source files must never contain `</script` (the build asserts this). Edit `src/` and `web/`, never `dist/` (it is gitignored and wiped on each build).
 
 **Core vs. UI split.**
-- `src/core.js` holds pure computation, with no DOM and no clock: time parsing and formatting, `normRow`, `mergeRows` (merge by RI and sort, keeping completion state), `compute` (legs, restarts, VM, TT, TA, estimates, close rows), CSV, and `parseOCR` (extracting JSON rows from model replies). It is a UMD-style IIFE: it exports via `module.exports` for Node tests, or sets `window.Core` in the browser. Keep it free of side effects so `test/core.test.js` can `require` it.
+- `src/core.js` holds pure computation, with no DOM and no clock: time parsing and formatting, `normRow`, `mergeRows` (merge by RI and sort, keeping completion state), `compute` (legs, restarts, VM, TT, TA, estimates, close rows), CSV export, `parseCSV` (CSV import), and `parseOCR` (extracting JSON rows from model replies). It is a UMD-style IIFE: it exports via `module.exports` for Node tests, or sets `window.Core` in the browser. Keep it free of side effects so `test/core.test.js` can `require` it.
 - `src/sample.js` is the invented "Desert Loop" rally, used by the unit tests and by the app's sample button. It uses the same dual export pattern.
 - `src/app.js` is the whole UI: tabs (Rallies, Route, Run, Data), modals, and storage. `R()` returns the current rally.
 
