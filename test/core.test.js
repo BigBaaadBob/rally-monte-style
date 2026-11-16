@@ -130,6 +130,18 @@ assert.strictEqual(Core.compute({ ...base(), rows: Core.mergeRows([], [{ ri: 5, 
 const csv = Core.toCSV({ ...R, name: 'Desert Loop', crew: { driver: 'Jane Driver', navigator: 'John Navigator', passengers: [] } });
 assert.ok(csv.includes('42,Y,8.55/0.00,8.72/0.00,09:12:00'), 'CSV restart row');
 assert.ok(csv.includes('41,,8.42,8.59,'), 'CSV first row not a restart');
+// CSV import: an export re-imports by header name (a restart OM carries the restart); bare lines use RI,OM,CZT,CP,Instruction,Info
+{ const rows = Core.parseCSV(csv);
+  assert.strictEqual(rows.length, R.rows.length, 'exported CSV re-imports every row');
+  const norm = R.rows.map(x => Core.normRow(x)), back = rows.map(x => Core.normRow(x));
+  norm.forEach((n, i) => { const b = back[i];
+    assert.deepStrictEqual([b.ri, b.om, b.restart, b.czt, b.cp, b.instr, b.info], [n.ri, n.om, n.restart, n.czt, n.cp, n.instr, n.info], 'CSV round trip row ' + i); }); }
+{ const q = Core.parseCSV('Rally,"A, B"\n\nRI,Restart,OM,Instruction,Info\n7,,1.25,"Left, then ""right""\nnext line",ok\n');
+  assert.strictEqual(q.length, 1);
+  assert.deepStrictEqual([q[0].ri, q[0].om, q[0].instr, q[0].info], ['7', '1.25', 'Left, then "right"\nnext line', 'ok'], 'quoted commas, quotes, and newlines'); }
+{ const b = Core.parseCSV('RI,OM,CZT,CP,Instruction,Info\n210,1.50,,,"R at [sign]",note\n211,1.70,16:20:00,90,CHECKPOINT,');
+  assert.deepStrictEqual(b.map(x => [x.ri, x.om, x.czt, x.cp, x.instr]), [['210', '1.50', null, null, 'R at [sign]'], ['211', '1.70', '16:20:00', '90', 'CHECKPOINT']], 'bare lines with a header'); }
+assert.strictEqual(Core.parseCSV('210,1.50,,,x,y').length, 1, 'bare line without a header');
 // OCR parse
 assert.strictEqual(Core.parseOCR('```json\n[{"ri":1}]\n```').length, 1);
 assert.strictEqual(Core.parseOCR('Here: {"rows":[{"ri":1},{"ri":2}]}').length, 2);

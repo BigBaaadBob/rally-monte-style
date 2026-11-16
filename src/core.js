@@ -241,6 +241,36 @@
     return head.join('\n') + '\n\n' + cols.join(',') + '\n' + body.join('\n') + '\n';
   }
 
+  // Parse CSV text into raw rows {ri, om, czt, cp, instr, info}. Accepts either an export from toCSV
+  // (rally details, a blank line, then an `RI,…` header: columns are found by name, computed ones ignored)
+  // or bare lines in the order RI,OM,CZT,CP,Instruction,Info. Quoted fields may contain commas and newlines.
+  function parseCSV(text) {
+    const recs = []; let cells = [], cur = '', q = false, any = false;
+    const endRec = () => { cells.push(cur); if (any || cells.length > 1) recs.push(cells); cells = []; cur = ''; any = false; };
+    for (let k = 0; k < text.length; k++) {
+      const ch = text[k];
+      if (q) { if (ch === '"' && text[k + 1] === '"') { cur += '"'; k++; } else if (ch === '"') q = false; else cur += ch; }
+      else if (ch === '"') { q = true; any = true; }
+      else if (ch === ',') { cells.push(cur); cur = ''; any = true; }
+      else if (ch === '\n') endRec();
+      else if (ch !== '\r') { cur += ch; if (ch.trim()) any = true; }
+    }
+    endRec();
+    const isHead = c => c.length > 1 && /^\s*ri\s*$/i.test(c[0]);
+    const h = recs.findIndex(isHead);
+    const idx = { ri: 0, om: 1, czt: 2, cp: 3, instr: 4, info: 5 };
+    let body = recs;
+    if (h >= 0) {
+      const names = recs[h].map(s => s.trim().toLowerCase());
+      for (const [key, name] of [['ri', 'ri'], ['om', 'om'], ['czt', 'czt'], ['cp', 'cp'], ['instr', 'instruction'], ['info', 'info']]) idx[key] = names.indexOf(name);
+      body = recs.slice(h + 1);
+    } else body = recs.filter(c => !isHead(c));
+    const at = (c, i) => i >= 0 && c[i] != null ? c[i] : '';
+    return body.filter(c => at(c, idx.ri).trim() !== '').map(c => ({
+      ri: at(c, idx.ri), om: at(c, idx.om), czt: at(c, idx.czt) || null, cp: at(c, idx.cp) || null,
+      instr: at(c, idx.instr), info: at(c, idx.info) }));
+  }
+
   // Strip a model reply down to the JSON array of rows.
   function parseOCR(text) {
     if (!text) return [];
@@ -258,6 +288,6 @@
   }
 
   const Core = { parseTOD, fmtTOD, parseRel, fmtRel, cmpRI, sameRI, normRow, mergeRows, compute, activeIndex, legOf,
-    setTA, lockEst, unlockEst, completeActive, CLOSE_MI, closeMi, uncomplete, lastCompleted, toCSV, parseOCR };
+    setTA, lockEst, unlockEst, completeActive, CLOSE_MI, closeMi, uncomplete, lastCompleted, toCSV, parseCSV, parseOCR };
   if (typeof module !== 'undefined' && module.exports) module.exports = Core; else root.Core = Core;
 })(typeof window !== 'undefined' ? window : globalThis);

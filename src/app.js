@@ -12,6 +12,7 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtVM = v => v == null ? '' : v.toFixed(2);
 const now = () => Date.now();
+// Legacy names kept so saved rallies and API keys survive. Do not rename without a migration.
 const LS_KEY = 'rallyRT.v1', LS_KEY_API = 'rallyRT.apikey';
 const APP_VERSION = (document.querySelector('meta[name="app-version"]') || {}).content || 'dev';
 // Models for reading pages with your own API key. Costs are rough per-page estimates (Nov 2026 list prices).
@@ -141,7 +142,7 @@ document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => show(b.
 
 function renderHeader() {
   const r = R();
-  $('hdrTitle').innerHTML = r ? `${esc(r.name || 'Untitled rally')}<span class="sub">${esc(r.date || '')}${r.cn !== '' ? ' · Car ' + esc(r.cn) : ''}${r.cls ? ' · Class ' + esc(r.cls) : ''}</span>` : 'Rally Route Table';
+  $('hdrTitle').innerHTML = r ? `${esc(r.name || 'Untitled rally')}<span class="sub">${esc(r.date || '')}${r.cn !== '' ? ' · Car ' + esc(r.cn) : ''}${r.cls ? ' · Class ' + esc(r.cls) : ''}</span>` : 'Rally: Monte Style';
   document.querySelectorAll('#tabs button').forEach(b => b.disabled = b.dataset.v !== 'rallies' && !r);
 }
 function applyTheme() { document.documentElement.dataset.theme = store.prefs.theme; }
@@ -188,7 +189,7 @@ function renderRallies() {
     const done = r.rows.filter(x => x.done).length;
     return `<div class="card rally-item ${r.id === store.cur ? 'cur' : ''}">
       <div class="grow"><div class="name">${esc(r.name || 'Untitled rally')}</div>
-      <div class="small muted">${esc(r.date || '')}${r.cn !== '' ? ' · Car ' + esc(r.cn) : ''} · ${r.rows.length} RIs${r.rows.length ? ` · ${done} complete` : ''}</div></div>
+      <div class="small muted">${esc(r.date || '')}${r.cn !== '' ? ' · Car ' + esc(r.cn) : ''} · ${r.rows.length} Route Instructions${r.rows.length ? ` · ${done} complete` : ''}</div></div>
       <button data-open="${r.id}" class="primary">Open</button></div>`;
   }).join('') : '<p class="muted">No rallies yet. Start a new one, or try the invented sample rally.</p>';
   $('rallyList').querySelectorAll('[data-open]').forEach(b => b.onclick = () => {
@@ -220,7 +221,7 @@ function renderSetup() {
       <div><label for="fCls">Class</label><select id="fCls"><option value="">—</option>${['A', 'B', 'C', 'D'].map(k => `<option ${r.cls === k ? 'selected' : ''}>${k}</option>`).join('')}</select></div>
     </div>
     <div class="small muted" id="ocfHelp"></div>
-    <label for="fClose">Highlight adjacent RIs this close or closer (vehicle miles)</label>
+    <label for="fClose">Highlight adjacent Route Instructions this close or closer (vehicle miles)</label>
     <input id="fClose" inputmode="decimal" value="${esc(r.closeMi ?? 0.5)}" style="max-width:160px">
   </div>
   <div class="card"><h2>Crew</h2>
@@ -243,7 +244,7 @@ function renderSetup() {
     </div>
   </div>
   <div class="card"><h2>Next</h2><ol class="steps">
-    <li>Route: add photos of the Route Instruction pages and check the table (needs internet).</li>
+    <li>Route: add photos of the Route Instruction pages and check the Route Instructions (needs internet).</li>
     <li>Run: complete each RI as you reach it. No internet needed.</li></ol>
     <div class="row" style="margin-top:8px"><button class="primary" id="goRoute">Go to Route</button></div></div>`;
   const ocfHelp = () => { const v = +r.ocf; $('ocfHelp').textContent = v > 0 ? (v === 1 ? 'OCF 1.0000: VM equals OM.' : `Your odometer reads ${((v - 1) * 100).toFixed(2)}% ${v > 1 ? 'more' : 'less'} than official.`) : 'OCF must be a positive number.'; };
@@ -304,10 +305,10 @@ function renderRoute() {
       ${!caps.sample && getApiKey() && (p.state === 'ok' || p.state === 'bad') && p.model !== OPUS ? `<button data-opus="${i}" title="Read this page again with Opus 5.5">Re-read: Opus</button>` : ''}</figure>`).join('')}</div>
   </div>
   <div class="row" style="margin-bottom:8px">
-    <strong>${r.rows.length} RIs</strong>
+    <strong>${r.rows.length} Route Instructions</strong>
     <button id="btnAdd">Add row</button><button id="btnSort">Sort by RI</button>
     <button id="btnPaste">Paste rows</button>
-    <button id="btnClearRT" class="danger" ${r.rows.length ? '' : 'disabled'}>Clear table</button>
+    <button id="btnClearRT" class="danger" ${r.rows.length ? '' : 'disabled'}>Clear Route Instructions</button>
   </div>
   ${newSet.size ? `<div class="banner">Highlighted rows came from the last read. Check them against the paper.</div>` : ''}
   ${flags.length ? `<div class="flags">${flags.slice(0, 8).map(esc).join('<br>')}${flags.length > 8 ? `<br>…and ${flags.length - 8} more` : ''}</div>` : ''}
@@ -322,7 +323,7 @@ function renderRoute() {
     <td class="c-instr"><input data-i="${i}" data-k="instr" value="${esc(x.instr)}"></td>
     <td class="c-info"><input data-i="${i}" data-k="info" value="${esc(x.info)}"></td>
     <td><button class="x" data-del="${i}" title="Delete row">✕</button></td></tr>`).join('')}</tbody></table></div>
-  <p class="small muted">OM is the official mileage; a checked Rst box means the OM column shows “/0.00” (odometer restarts at that RI). Times may be typed as HH:MM:SS or HH:MM.cc. When the table is right, go to Run.</p>`;
+  <p class="small muted">OM is the official mileage; a checked Rst box means the OM column shows “/0.00” (odometer restarts at that RI). Times may be typed as HH:MM:SS or HH:MM.cc. When the Route Instructions are right, go to Run.</p>`;
 
   $('fPages').onchange = e => {
     for (const f of e.target.files) pages.push({ file: f, url: URL.createObjectURL(f), state: '', msg: '' });
@@ -351,7 +352,7 @@ function renderRoute() {
     const w = document.querySelector('#v-route'); w.scrollTop = w.scrollHeight;
   };
   $('btnSort').onclick = () => { r.rows.sort((a, b) => Core.cmpRI(a.ri, b.ri)); save(r); renderRoute(); };
-  $('btnClearRT').onclick = () => confirmBox('Clear route table', `Remove all ${r.rows.length} RIs from “${esc(r.name || 'this rally')}”? Completion marks and time adjustments go too.`, 'Clear', () => {
+  $('btnClearRT').onclick = () => confirmBox('Clear Route Instructions', `Remove all ${r.rows.length} Route Instructions from “${esc(r.name || 'this rally')}”? Completion marks and time adjustments go too.`, 'Clear', () => {
     r.rows = []; r.taEvents = []; newSet.clear(); save(r); renderRoute();
   });
   $('btnPaste').onclick = pasteRows;
@@ -449,8 +450,8 @@ async function readPages(only, model) {
       const rows = await ocrOne(await prepImage(p.file), model);
       p.model = caps.sample ? null : model;
       const by = caps.sample ? '' : ` · ${modelName(model)}`;
-      if (!rows.length) { p.state = 'bad'; p.msg = 'No RIs found' + by; }
-      else { const s = mergeIntoRally(rows, `Page ${i + 1}${by}`); p.state = 'ok'; p.msg = `${rows.length} RIs${by}`; msgs.push(s); }
+      if (!rows.length) { p.state = 'bad'; p.msg = 'No Route Instructions found' + by; }
+      else { const s = mergeIntoRally(rows, `Page ${i + 1}${by}`); p.state = 'ok'; p.msg = `${rows.length} Route Instructions${by}`; msgs.push(s); }
     } catch (e) {
       p.state = 'bad'; p.msg = e && e.code === 'not_granted' ? 'Not allowed' : 'Failed';
       msgs.push(`Page ${i + 1}: ${e && (e.message || e.code) || 'failed'}`);
@@ -495,28 +496,11 @@ function pasteRows() {
     const t = $('pasteBox').value.trim(); if (!t) return;
     let rows = [];
     try { rows = Core.parseOCR(t); } catch (e) { rows = []; }
-    if (!rows.length && /^[^\n]*,[^\n]*,/.test(t)) { try { rows = parseCSVRows(t); } catch (e) { rows = []; } }
+    if (!rows.length && /^[^\n]*,[^\n]*,/m.test(t)) { try { rows = Core.parseCSV(t); } catch (e) { rows = []; } }
     if (!rows.length) { toast('No rows found in that text'); return false; }
     toast(mergeIntoRally(rows, 'Pasted')); renderRoute();
   });
 }
-function parseCSVRows(t) {
-  const out = [];
-  for (const line of t.split(/\r?\n/)) {
-    if (!line.trim()) continue;
-    const cells = []; let cur = '', q = false;
-    for (let k = 0; k < line.length; k++) {
-      const ch = line[k];
-      if (q) { if (ch === '"' && line[k + 1] === '"') { cur += '"'; k++; } else if (ch === '"') q = false; else cur += ch; }
-      else if (ch === '"') q = true; else if (ch === ',') { cells.push(cur); cur = ''; } else cur += ch;
-    }
-    cells.push(cur);
-    if (/^\s*ri\s*$/i.test(cells[0])) continue;
-    out.push({ ri: cells[0], om: cells[1], czt: cells[2] || null, cp: cells[3] || null, instr: cells[4] || '', info: cells[5] || '' });
-  }
-  return out;
-}
-
 // ---------------------------------------------------------------- RUN (operation)
 // The Run list keeps whatever position the user scrolled to across re-renders.
 const runPos = { list: 0, top: 0 };
@@ -525,11 +509,11 @@ function renderRun() {
   const oldW = $('runWrap'), oldT = v.querySelector('.runtop');
   if (oldW) runPos.list = oldW.scrollTop;
   if (oldT) runPos.top = oldT.scrollTop;
-  if (!r.rows.length) { v.innerHTML = '<div class="narrow"><p class="muted">No route table yet.</p><button class="primary" id="goR">Build it on Route</button></div>'; $('goR').onclick = () => show('route'); return; }
+  if (!r.rows.length) { v.innerHTML = '<div class="narrow"><p class="muted">No Route Instructions yet.</p><button class="primary" id="goR">Build it on Route</button></div>'; $('goR').onclick = () => show('route'); return; }
   const C = Core.compute(r), a = Core.activeIndex(r), done = r.rows.filter(x => x.done).length;
   let card;
   if (a < 0) {
-    card = `<div class="active-card"><div class="ac-ri">All ${r.rows.length} RIs complete</div>
+    card = `<div class="active-card"><div class="ac-ri">All ${r.rows.length} Route Instructions complete</div>
       <div class="ac-btns" style="grid-template-columns:1fr"><button id="btnUndo">Undo last complete</button></div></div>`;
   } else {
     const x = r.rows[a], c = C[a], nx = r.rows[a + 1], cn = C[a + 1];
@@ -729,13 +713,13 @@ function renderData() {
   $('dataBody').innerHTML = `
   <div class="card"><h2>${esc(r.name || 'Untitled rally')}</h2>
     <div class="small">${esc(r.date)} · Car ${esc(r.cn)} · Class ${esc(r.cls || '—')} · OCF ${esc(r.ocf)} · Driver ${esc(r.crew.driver || '—')} · Navigator ${esc(r.crew.navigator || '—')}${r.crew.passengers.filter(Boolean).length ? ' · Passengers ' + esc(r.crew.passengers.filter(Boolean).join(', ')) : ''}</div>
-    <div class="small muted" style="margin-top:4px">${r.rows.length} RIs · ${done} complete · TAs entered: ${tas.length ? tas.map(t => `RI ${esc(t.ri)} ${fmtTA(t.ta)}`).join(', ') : 'none'}</div>
+    <div class="small muted" style="margin-top:4px">${r.rows.length} Route Instructions · ${done} complete · TAs entered: ${tas.length ? tas.map(t => `RI ${esc(t.ri)} ${fmtTA(t.ta)}`).join(', ') : 'none'}</div>
     <div class="small muted" style="margin-top:4px">Storage: ${lsOK ? 'saved on this device' : 'NOT saved on this device'}${Cloud.col ? `; private copy in your Claude account${Cloud.last ? ' (last saved ' + new Date(Cloud.last).toLocaleTimeString() + ')' : ''}` : ''}.</div>
   </div>
   <div class="card"><h3>Export</h3>
     <div class="row"><button id="xCSV">Download CSV</button><button id="xJSON">Download JSON</button>
       <button id="cCSV">Copy CSV</button><button id="cJSON">Copy JSON</button></div>
-    <div class="small muted" style="margin-top:6px">CSV holds the augmented route table (OM, VM, CZT, TA, TT, estimates, completion times). JSON is the full rally record and can be imported back.</div>
+    <div class="small muted" style="margin-top:6px">CSV holds the augmented Route Instructions (OM, VM, CZT, TA, TT, estimates, completion times). JSON is the full rally record and can be imported back.</div>
   </div>
   <div class="card"><h3>Import</h3>
     <span class="filebtn">Import rally JSON<input type="file" id="fImport" accept=".json,application/json,text/plain" aria-label="Import rally JSON"></span>
@@ -755,12 +739,12 @@ function renderData() {
       <button id="bDup">Duplicate rally</button>
       <button id="bDel" class="danger">Delete rally</button></div>
   </div>`;
-  const csv = () => Core.toCSV(r, store.prefs.fmt), json = () => JSON.stringify({ app: 'rally-route-table', version: 1, rally: r }, null, 1);
+  const csv = () => Core.toCSV(r, store.prefs.fmt), json = () => JSON.stringify({ app: 'rally-monte-style', version: 1, rally: r }, null, 1);
   $('xCSV').onclick = () => offerFile(fileBase(r) + '.csv', csv(), 'text/csv');
   $('xJSON').onclick = () => offerFile(fileBase(r) + '.json', json(), 'application/json');
   $('cCSV').onclick = () => copyText(csv(), 'CSV');
   $('cJSON').onclick = () => copyText(json(), 'JSON');
-  $('xApp').onclick = () => offerFile('rally-route-table.html', SELF_HTML, 'text/html');
+  $('xApp').onclick = () => offerFile('rally-route-instructions.html', SELF_HTML, 'text/html');
   $('fImport').onchange = async e => {
     const f = e.target.files[0]; e.target.value = ''; if (!f) return;
     try {
@@ -773,14 +757,14 @@ function renderData() {
     } catch (err) { toast('That file is not a rally JSON export'); }
   };
   if ($('bKeyDel')) $('bKeyDel').onclick = () => confirmBox('Remove API key', 'Remove the saved Anthropic API key from this device?', 'Remove', () => { try { localStorage.removeItem(LS_KEY_API); } catch (e) {} renderData(); });
-  $('bResetRun').onclick = () => confirmBox('Clear run data', 'Clear all completion marks, time adjustments, and estimate toggles? The route table stays.', 'Clear', () => {
+  $('bResetRun').onclick = () => confirmBox('Clear run data', 'Clear all completion marks, time adjustments, and estimate toggles? The Route Instructions stay.', 'Clear', () => {
     r.rows = r.rows.map(x => ({ ...x, done: false, ttDone: null, doneAt: null, estLock: null, estLockBy: null })); r.taEvents = []; save(r); renderData();
   });
   $('bDup').onclick = () => {
     const nr = JSON.parse(JSON.stringify(r)); nr.id = newId(); nr.name = (r.name || 'Rally') + ' (copy)'; nr.created = nr.updated = now();
     store.rallies[nr.id] = nr; store.cur = nr.id; save(nr); toast('Duplicated'); renderAll();
   };
-  $('bDel').onclick = () => confirmBox('Delete rally', `Delete “${esc(r.name || 'Untitled rally')}” and its route table from this device${Cloud.col ? ' and your account' : ''}? Export it first if you want a record.`, 'Delete', () => {
+  $('bDel').onclick = () => confirmBox('Delete rally', `Delete “${esc(r.name || 'Untitled rally')}” and its Route Instructions from this device${Cloud.col ? ' and your account' : ''}? Export it first if you want a record.`, 'Delete', () => {
     delete store.rallies[r.id]; store.cur = null; Cloud.queue(r.id); save(); show('rallies');
   });
 }
