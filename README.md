@@ -38,20 +38,43 @@ Once installed it opens from its icon and runs with no internet. Internet is nee
 
 ## Build and test
 
+The tests need Python 3.14 in a project virtual environment, plus Node for the unit tests.
+
+Set up once.
+
+Windows:
+
+```sh
+py -V:3.14 -m venv .venv
+.venv/Scripts/python -m pip install -r requirements-dev.txt
+.venv/Scripts/python -m playwright install chromium
+```
+
+Linux or WSL:
+
+```sh
+python3.14 -m venv .venv
+.venv/bin/python -m pip install -r requirements-dev.txt
+.venv/bin/python -m playwright install --with-deps chromium
+```
+
 Everything (build, unit tests, every browser test):
 
 ```sh
-test/run-all.sh
+.venv/Scripts/python test/run_all.py     # Windows
+.venv/bin/python test/run_all.py         # Linux or WSL
 ```
 
-Individually:
+Individually (shown for Windows; use `.venv/bin/python` on Linux or WSL):
 
 ```sh
-python3 build.py
+.venv/Scripts/python build.py
 node test/core.test.js
-python3 test/e2e/pwa.py       # offline cache, update prompt, API reading (needs Playwright + Chrome)
-python3 test/e2e/e2e6.py      # Run screen
+.venv/Scripts/python test/e2e/pwa.py     # offline cache, update prompt, API reading
+.venv/Scripts/python test/e2e/e2e6.py    # Run screen
 ```
+
+Screenshots go to `test/e2e/out/`.
 
 ## License
 
