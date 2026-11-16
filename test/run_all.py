@@ -15,7 +15,9 @@ env = dict(os.environ, PYTHONUTF8='1')
 
 def run(*cmd):
     r = subprocess.run(cmd, env=env)
-    if r.returncode: sys.exit(r.returncode)
+    if r.returncode:
+        print(f'FAILED: {cmd[-1]} (exit {r.returncode})', flush=True)
+        sys.exit(r.returncode)
 
 run(sys.executable, 'build.py')
 if not shutil.which('node'):
