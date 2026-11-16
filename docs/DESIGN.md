@@ -39,6 +39,8 @@ Moved from the claude.ai "Road Rally" Project. The app was first delivered as a 
 - Offline copy: strips any security-policy meta tags and scripts injected by the hosting viewer from the downloaded HTML, so the standalone copy can reach the API.
 - Read in a Claude chat… (for the Claude Android app, where the photo picker does nothing in artifacts): copy the instructions, attach the photos in a normal Claude chat, then paste Claude's whole reply into Paste rows. The JSON is extracted from the reply even with surrounding prose and [brackets] in instruction text, and several fenced blocks are combined. Paste rows also accepts CSV.
 - A copied photo can be pasted on the Route tab where the device allows it.
+- Add page photos opens a picker that accepts several images at once, so a whole rally can be added in one go.
+- Paste rows with no rows found shows "No rows found in that text", keeps the dialog open, and leaves the table unchanged.
 
 ## Testing
 - Node unit tests for the core; Playwright runs at 390/360 px portrait and 844 px landscape.
@@ -54,7 +56,7 @@ Moved from the claude.ai "Road Rally" Project. The app was first delivered as a 
 - The same `dist/index.html` still works as a claude.ai artifact (no offline cache there; Claude's own reader is used).
 
 ## Reading pages (v8)
-- Outside claude.ai, pages are read with the user's Anthropic API key, entered on the Route tab and stored only in that device's local storage. It is never exported or committed. The Data tab can remove it.
+- Outside claude.ai, pages are read with the user's Anthropic API key, entered on the Route tab and stored only in that device's local storage. It is never exported or committed. The Data tab can remove it. Only a key that starts with `sk-ant-` is saved; any other entry is rejected with a message and nothing is stored.
 - Model picker (saved per device): Sonnet 5.5 (default, about 2¢/page), Haiku 5.5 (about 0.1¢/page), Opus 5.5 (about 7¢/page). Estimates use Nov 2026 list prices and an image of about 3,900 tokens at 2,000 px.
 - Each page thumbnail shows which model read it, and offers "Re-read: Opus" for a page that needs a second look. Re-reading merges by RI, replacing that page's rows.
 - Errors name the cause: no network, key rejected (401), refused (402/403: credit or model access), or reply cut off.
