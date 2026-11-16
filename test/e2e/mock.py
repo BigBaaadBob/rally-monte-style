@@ -2,8 +2,8 @@
 Run from the repo root after a build:
   Windows:    .venv/Scripts/python build.py && .venv/Scripts/python test/e2e/mock.py
   Linux/WSL:  .venv/bin/python build.py && .venv/bin/python test/e2e/mock.py"""
-from _common import APP_URL, launch_browser
-import asyncio, json, sys
+from _common import APP_URL, launch_browser, check, capture_errors, run
+import json
 from playwright.async_api import async_playwright
 import pathlib
 PAGE = str(pathlib.Path(__file__).resolve().parent / 'page.png')   # committed fixture image
@@ -17,12 +17,16 @@ MOCK = r"""
       doc: id => ({ set: async d => { window.__writes = (window.__writes||0)+1; }, delete: async () => {} }) }) };
   const sample = Object.assign(async (input, opts) => {
       window.__sampleCalls = (window.__sampleCalls||0)+1; window.__sampleImgs = opts.images.length;
-      return { text: JSON.stringify([{ri:300, om:'1.10', czt:null, instr:'L at T', info:''},{ri:301, om:'1.30', czt:'16:10:00', cp:80, instr:'CHECKPOINT', info:''}]) }; },
+      return { text: JSON.stringify(__READ_ROWS__) }; },
     { limits: async () => ({ images: true }) });
   const caps = { db, user: { id: async () => 'u1' }, sample: Object.freeze(sample), downloads: null };
   window.claude = Object.freeze({ use: async n => caps[n] ?? null });
 })();
 """
+READ_ROWS = [{'ri':300, 'om':'1.10', 'czt':None, 'instr':'L at T', 'info':''},
+             {'ri':301, 'om':'1.30', 'czt':'16:10:00', 'cp':80, 'instr':'CHECKPOINT', 'info':''}]
+MOCK = MOCK.replace('__READ_ROWS__', json.dumps(READ_ROWS))
+
 async def main():
     async with async_playwright() as p:
         b = await launch_browser(p)
@@ -31,17 +35,20 @@ async def main():
                   'cn':12,'ocf':1.02,'speedo':30,'rows':[{'ri':299,'om':0.5,'restart':False,'czt':None,'cp':None,'instr':'x','info':''}],
                   'taEvents':[],'created':1,'updated':9999999999999}
         await ctx.add_init_script(f"window.__REMOTE__ = {json.dumps([remote])};" + MOCK)
-        pg = await ctx.new_page(); errs=[]
-        pg.on('pageerror', lambda e: errs.append('pageerror: '+str(e)))
+        pg = await ctx.new_page(); capture_errors(pg)    # the frozen account copy must load without a page error (DESIGN l.33)
         await pg.goto(APP_URL); await pg.evaluate('localStorage.clear()'); await pg.reload()
         await pg.wait_for_function("document.getElementById('cloud').textContent.includes('account')", timeout=5000)
         await pg.click('[data-open="rCLOUD"]'); await pg.click('#tabs button[data-v=route]')
+        before = await pg.evaluate("R().rows")
         await pg.set_input_files('#fPages', PAGE)
         await pg.click('#btnRead'); await pg.wait_for_selector('#modal.on', timeout=8000)
         print('dialog:', (await pg.inner_text('#mBody')).replace('\n',' | ')[:200])
         await pg.click('#mOk')
-        print('rows now:', await pg.evaluate("R().rows.map(r=>r.ri).join(',')"), 'sample calls', await pg.evaluate('window.__sampleCalls'))
+        # DESIGN l.37 and l.59: one call per page photo, and the rows merge by RI and sort.
+        want = await pg.evaluate("([before, rows]) => Core.mergeRows(before, rows).rows.map(r => r.ri).join(',')", [before, READ_ROWS])
+        check(await pg.evaluate("R().rows.map(r => r.ri).join(',')") == want, f'Read merges the page rows into the account copy ({want})')
+        check(await pg.evaluate('window.__sampleCalls') == 1, 'one sample call for one page photo')
         await pg.click('#tabs button[data-v=run]'); await pg.click('#btnDone')
-        print('after complete:', await pg.evaluate("R().rows.filter(r=>r.done).length"))
-        print('ERRORS', errs); await b.close()
-asyncio.run(main())
+        check(await pg.evaluate("R().rows.filter(r => r.done).length") == 1, 'Complete marks exactly one row done')
+        await b.close()
+run(main)
