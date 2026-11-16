@@ -29,6 +29,19 @@ test/run-all.sh               # build + unit tests + every e2e script; stops at 
 - Before finishing a change: `python3 build.py && node test/core.test.js`, plus the relevant e2e script (`pwa.py` for anything touching install, offline, or API reading; `e2e6.py` for the Run screen).
 - Never commit API keys. The Anthropic key lives only in each device's localStorage.
 
+## Workflow
+
+Three project skills in `.claude/skills/` drive the issue-to-merge loop. Each runs only when typed, never automatically.
+
+- `/start-issue <n>`: requires a clean tree, syncs `main`, creates `fix/`, `docs/`, or `feat/` `<n>-<slug>` from the issue's labels, reads the issue and its "Brief for #n" comment, then proposes a plan. No files are edited until the plan is approved.
+- `/ship`: confirms `docs/DESIGN.md` changed (or that no design update is needed), runs `test/run-all.sh`, scans the staged diff for secrets and personal information, commits design and code separately, asks before pushing, then opens a PR ending in `Closes #n`. It never merges.
+- `/finish`: after the merge, returns to `main`, pulls, deletes the merged local and remote branch (asking before a force delete or a remote delete), and confirms the issue closed.
+
+Merging is done by the owner on GitHub after review.
+
+- Briefs are written in a separate claude.ai chat and posted as an issue comment headed "Brief for #n". This session cannot see that chat; the issue comment is the only hand-off.
+- Don't push, open pull requests, or switch branches outside these skills unless I ask explicitly. If I ask to push or open a PR, suggest `/ship` instead.
+
 ## Privacy and information protection
 - This is a public repo. Test fixtures and the sample rally use the invented crew "Jane Driver" / "John Navigator"; never put real names, private claude.ai links, or real Route Instruction photos in the repo. The public Pages URL (`bigbaaadbob.github.io/rally-monte-style`) is allowed.
 
