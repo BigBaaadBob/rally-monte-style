@@ -1,10 +1,12 @@
+"""Route screen: paste/CSV import, offline copy, and Read without an API key.
+Run from the repo root after a build:
+  Windows:    .venv/Scripts/python build.py && .venv/Scripts/python test/e2e/e2e7.py
+  Linux/WSL:  .venv/bin/python build.py && .venv/bin/python test/e2e/e2e7.py"""
+from _common import APP_URL, OUT_DIR, launch_browser
 import asyncio, json
 from playwright.async_api import async_playwright
 import pathlib
-HERE = pathlib.Path(__file__).resolve().parent
-APP = 'file://' + str(HERE.parents[1] / 'dist/index.html')   # run python3 build.py first
-PAGE = str(HERE / 'page.png')
-OUT = pathlib.Path('/tmp/rally-e2e'); OUT.mkdir(exist_ok=True)   # screenshots
+PAGE = str(pathlib.Path(__file__).resolve().parent / 'page.png')   # committed fixture image
 
 REPLY = '''Here are the rows. RI 193 is at the [curve-left sign].
 ```json
@@ -17,17 +19,17 @@ INJECT = """new MutationObserver((m, o) => { if (document.head && !document.getE
   .observe(document, { childList: true, subtree: true });"""
 async def main():
     async with async_playwright() as p:
-        b = await p.chromium.launch(executable_path='/usr/bin/google-chrome', args=['--no-sandbox'])
+        b = await launch_browser(p)
         ctx = await b.new_context(viewport={'width':390,'height':844}, has_touch=True, is_mobile=True)
         await ctx.add_init_script(INJECT)
         await ctx.grant_permissions(['clipboard-read','clipboard-write'])
         pg = await ctx.new_page(); errs=[]
         pg.on('pageerror', lambda e: errs.append(str(e)))
-        await pg.goto(APP); await pg.evaluate('localStorage.clear()'); await pg.reload()
+        await pg.goto(APP_URL); await pg.evaluate('localStorage.clear()'); await pg.reload()
         print('injected present in live page:', await pg.evaluate("!!document.getElementById('fakecsp')"))
         selfhtml = await pg.evaluate('SELF_HTML')
         print('offline copy has CSP meta:', 'fakecsp' in selfhtml, '| injected script:', '__injected' in selfhtml, '| our scripts:', selfhtml.count('<script data-rt'))
-        open(str(OUT / 'offline.html'),'w').write(selfhtml)
+        (OUT_DIR / 'offline.html').write_text(selfhtml, encoding='utf-8')
         await pg.click('#btnNewSample')
         # speedo persists across reload
         await pg.click('#tabs button[data-v=run]'); await pg.click('[data-sp="5"]'); await pg.click('[data-sp="1"]')
@@ -47,11 +49,11 @@ async def main():
         # offline copy runs standalone; Read explains the API key
         pg2 = await (await b.new_context(viewport={'width':390,'height':844})).new_page(); e2=[]
         pg2.on('pageerror', lambda e: e2.append(str(e)))
-        await pg2.goto('file://' + str(OUT / 'offline.html')); await pg2.click('#btnNewSample'); await pg2.click('#tabs button[data-v=route]')
+        await pg2.goto((OUT_DIR / 'offline.html').as_uri()); await pg2.click('#btnNewSample'); await pg2.click('#tabs button[data-v=route]')
         await pg2.set_input_files('#fPages', PAGE); await pg2.click('#btnRead')
         print('offline Read ->', await pg2.inner_text('#mTitle'))
-        await pg2.screenshot(path=str(OUT / '22-offline-read.png'))
-        await pg2.click('#mOk'); await pg2.screenshot(path=str(OUT / '23-chat.png'))
+        await pg2.screenshot(path=str(OUT_DIR / '22-offline-read.png'))
+        await pg2.click('#mOk'); await pg2.screenshot(path=str(OUT_DIR / '23-chat.png'))
         print('offline ERRORS', e2)
         await b.close()
 asyncio.run(main())

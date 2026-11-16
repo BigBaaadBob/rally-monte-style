@@ -6,27 +6,38 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A Route Table app for SCCA Monte Carlo–style (TDS) road rallies. It is a single-page, offline-capable PWA written in plain JavaScript, with no framework, no npm dependencies and no bundler. It builds a route table from photos of Route Instruction pages, which are read by Claude. It then computes VM (vehicle miles) and TT (target time), and estimates TT for rows that have no CZT. `docs/DESIGN.md` is the authoritative spec for behavior. Read it before changing any computation or Run-screen behavior.
 
+## Python
+
+Python: use the project environment (Python 3.14); never the global python.
+
+- Windows: `py -V:3.14 -m venv .venv`, then `.venv/Scripts/python -m pip install -r requirements-dev.txt` and `.venv/Scripts/python -m playwright install chromium`.
+- Linux or WSL: `python3.14 -m venv .venv`, then `.venv/bin/python -m pip install -r requirements-dev.txt` and `.venv/bin/python -m playwright install --with-deps chromium`.
+
+Run all tests with `.venv/Scripts/python test/run_all.py` (Windows) or `.venv/bin/python test/run_all.py` (Linux/WSL). `run_all.py` and every e2e script exit 1 with a version message on any other Python.
+
 ## Commands
 
+Commands below use the Windows venv path; on Linux/WSL use `.venv/bin/python`.
+
 ```sh
-python3 build.py              # build dist/ (required before any e2e test)
-node test/core.test.js        # unit tests for src/core.js (this is all CI runs)
-python3 test/e2e/e2e6.py      # one browser test (Playwright, Python); needs dist/ built
-python3 test/e2e/pwa.py       # offline cache, update prompt, API-key reading (serves dist/ on :8765)
-test/run-all.sh               # build + unit tests + every e2e script; stops at first failure
+.venv/Scripts/python build.py              # build dist/ (required before any e2e test)
+node test/core.test.js                     # unit tests for src/core.js (this is all CI runs)
+.venv/Scripts/python test/e2e/e2e6.py      # one browser test (Playwright); needs dist/ built
+.venv/Scripts/python test/e2e/pwa.py       # offline cache, update prompt, API-key reading (serves dist/ on 127.0.0.1:8765)
+.venv/Scripts/python test/run_all.py       # build + unit tests + every e2e script; stops at first failure
 ```
 
 - There is no lint step and no package.json.
 - The unit tests are a single assert script. To run a subset, comment out sections or run snippets with `node -e "const Core=require('./src/core.js'); ..."`.
-- The e2e scripts mostly **print** results (and `ERRORS [...]` for page errors) and do not assert. Read their output to judge pass or fail. Screenshots go to `/tmp/rally-e2e/`.
-- The e2e scripts hardcode `/usr/bin/google-chrome` and `/tmp`, so they assume Linux. On Windows, change `executable_path`/`CHROME` (or drop it to use Playwright's bundled Chromium), and use `python` if `python3` is not on PATH.
+- The e2e scripts mostly **print** results (and `ERRORS [...]` for page errors) and do not assert. Read their output to judge pass or fail. Screenshots go to `test/e2e/out/` (gitignored).
+- `test/e2e/_common.py` is shared by the e2e scripts; `test/e2e/page.png` is a committed fixture image that they upload.
 - `tools/make_icons.py` (needs Pillow) regenerates `web/icons/*.png`. The PNGs are committed, so it rarely needs to run.
 
 ## Rules for every change
 
 - When behavior changes, update `docs/DESIGN.md` in the same change.
 - Every change to `src/core.js` computation gets a unit test in `test/core.test.js`.
-- Before finishing a change: `python3 build.py && node test/core.test.js`, plus the relevant e2e script (`pwa.py` for anything touching install, offline, or API reading; `e2e6.py` for the Run screen).
+- Before finishing a change: `.venv/Scripts/python test/run_all.py` (`.venv/bin/python` on Linux/WSL), or at least build + `node test/core.test.js` plus the relevant e2e script (`pwa.py` for anything touching install, offline, or API reading; `e2e6.py` for the Run screen).
 - Never commit API keys. The Anthropic key lives only in each device's localStorage.
 
 ## Workflow
@@ -34,7 +45,7 @@ test/run-all.sh               # build + unit tests + every e2e script; stops at 
 Three project skills in `.claude/skills/` drive the issue-to-merge loop. Each runs only when typed, never automatically.
 
 - `/start-issue <n>`: requires a clean tree, syncs `main`, creates `fix/`, `docs/`, or `feat/` `<n>-<slug>` from the issue's labels, reads the issue and its "Brief for #n" comment, then proposes a plan. No files are edited until the plan is approved.
-- `/ship`: confirms `docs/DESIGN.md` changed (or that no design update is needed), runs `test/run-all.sh`, scans the staged diff for secrets and personal information, commits design and code separately, asks before pushing, then opens a PR ending in `Closes #n`. It never merges.
+- `/ship`: confirms `docs/DESIGN.md` changed (or that no design update is needed), runs `test/run_all.py`, scans the staged diff for secrets and personal information, commits design and code separately, asks before pushing, then opens a PR ending in `Closes #n`. It never merges.
 - `/finish`: after the merge, returns to `main`, pulls, deletes the merged local and remote branch (asking before a force delete or a remote delete), and confirms the issue closed.
 
 Merging is done by the owner on GitHub after review.

@@ -16,7 +16,7 @@ disable-model-invocation: true
 
 1. Take the issue number from the branch name: the digits after the prefix (`fix/14-pause-at-restart` gives 14). If the branch is `main` or has no number, stop and report.
 2. Check that `docs/DESIGN.md` changed on this branch, committed or not. If it did not, ask whether this change truly needs no design update. Continue only on a clear yes.
-3. Run `test/run-all.sh`.
+3. Run `.venv/Scripts/python test/run_all.py` (`.venv/bin/python` on Linux or WSL).
    - If any test fails, stop and report the failures. Do not commit.
    - Exception: if the only failures are end-to-end tests that cannot run on this machine for a reason recorded in `CLAUDE.md`, report that and continue. CI on GitHub runs them.
 4. Commit in two steps. Before each commit, list the files it will include.

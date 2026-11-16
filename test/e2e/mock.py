@@ -1,11 +1,12 @@
-# Mocks the Claude runtime: db returns FROZEN snapshot data (as the real one does), sample returns rows.
+"""Mocks the Claude runtime: db returns FROZEN snapshot data (as the real one does), sample returns rows.
+Run from the repo root after a build:
+  Windows:    .venv/Scripts/python build.py && .venv/Scripts/python test/e2e/mock.py
+  Linux/WSL:  .venv/bin/python build.py && .venv/bin/python test/e2e/mock.py"""
+from _common import APP_URL, launch_browser
 import asyncio, json, sys
 from playwright.async_api import async_playwright
 import pathlib
-HERE = pathlib.Path(__file__).resolve().parent
-APP = 'file://' + str(HERE.parents[1] / 'dist/index.html')   # run python3 build.py first
-PAGE = str(HERE / 'page.png')
-OUT = pathlib.Path('/tmp/rally-e2e'); OUT.mkdir(exist_ok=True)   # screenshots
+PAGE = str(pathlib.Path(__file__).resolve().parent / 'page.png')   # committed fixture image
 
 MOCK = r"""
 (() => {
@@ -24,7 +25,7 @@ MOCK = r"""
 """
 async def main():
     async with async_playwright() as p:
-        b = await p.chromium.launch(executable_path='/usr/bin/google-chrome', args=['--no-sandbox'])
+        b = await launch_browser(p)
         ctx = await b.new_context(viewport={'width':820,'height':1180}, has_touch=True)
         remote = {'id':'rCLOUD','name':'Made on another device','date':'2026-11-11','crew':{'driver':'Jane Driver','navigator':'','passengers':[]},
                   'cn':12,'ocf':1.02,'speedo':30,'rows':[{'ri':299,'om':0.5,'restart':False,'czt':None,'cp':None,'instr':'x','info':''}],
@@ -32,13 +33,9 @@ async def main():
         await ctx.add_init_script(f"window.__REMOTE__ = {json.dumps([remote])};" + MOCK)
         pg = await ctx.new_page(); errs=[]
         pg.on('pageerror', lambda e: errs.append('pageerror: '+str(e)))
-        await pg.goto(APP); await pg.evaluate('localStorage.clear()'); await pg.reload()
+        await pg.goto(APP_URL); await pg.evaluate('localStorage.clear()'); await pg.reload()
         await pg.wait_for_function("document.getElementById('cloud').textContent.includes('account')", timeout=5000)
         await pg.click('[data-open="rCLOUD"]'); await pg.click('#tabs button[data-v=route]')
-        # fake a photo
-        png = await pg.evaluate("""(async()=>{const c=document.createElement('canvas');c.width=60;c.height=80;c.getContext('2d').fillRect(0,0,10,10);
-            return await new Promise(r=>c.toBlob(b=>{const fr=new FileReader();fr.onload=()=>r(fr.result.split(',')[1]);fr.readAsDataURL(b)},'image/png'))})()""")
-        import base64; open(PAGE,'wb').write(base64.b64decode(png))
         await pg.set_input_files('#fPages', PAGE)
         await pg.click('#btnRead'); await pg.wait_for_selector('#modal.on', timeout=8000)
         print('dialog:', (await pg.inner_text('#mBody')).replace('\n',' | ')[:200])

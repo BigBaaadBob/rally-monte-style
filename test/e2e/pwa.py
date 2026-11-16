@@ -1,23 +1,32 @@
 """Hosted-app checks: offline cache, update prompt, and API-key reading (Anthropic API mocked).
-Run from the repo root after `python3 build.py`:  python3 test/e2e/pwa.py"""
-import asyncio, json, pathlib, subprocess, sys, time
+Run from the repo root after a build:
+  Windows:    .venv/Scripts/python build.py && .venv/Scripts/python test/e2e/pwa.py
+  Linux/WSL:  .venv/bin/python build.py && .venv/bin/python test/e2e/pwa.py"""
+from _common import ROOT, OUT_DIR, launch_browser
+import asyncio, json, socket, subprocess, sys, time
 from playwright.async_api import async_playwright
 
-ROOT = pathlib.Path(__file__).resolve().parents[2]
 PORT = 8765
 PAGE = ROOT / 'test/e2e/page.png'
-CHROME = '/usr/bin/google-chrome'
 
 def serve():
-    return subprocess.Popen([sys.executable, '-m', 'http.server', str(PORT), '-d', str(ROOT / 'dist')],
+    proc = subprocess.Popen([sys.executable, '-m', 'http.server', str(PORT), '--bind', '127.0.0.1', '-d', str(ROOT / 'dist')],
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    deadline = time.monotonic() + 10
+    while True:
+        try:
+            socket.create_connection(('127.0.0.1', PORT), timeout=1).close(); return proc
+        except OSError:
+            if time.monotonic() > deadline:
+                proc.terminate(); raise RuntimeError(f'http.server did not start on 127.0.0.1:{PORT} within 10 s')
+            time.sleep(0.1)
 
 async def main():
-    srv = serve(); time.sleep(0.8)
+    srv = serve()
     calls = []
     try:
         async with async_playwright() as p:
-            b = await p.chromium.launch(executable_path=CHROME, args=['--no-sandbox'])
+            b = await launch_browser(p)
             ctx = await b.new_context(viewport={'width': 390, 'height': 844}, has_touch=True, is_mobile=True)
             async def api(route):
                 body = json.loads(route.request.post_data)
@@ -30,7 +39,7 @@ async def main():
             await ctx.route('https://api.anthropic.com/**', api)
             pg = await ctx.new_page(); errs = []
             pg.on('pageerror', lambda e: errs.append(str(e)))
-            url = f'http://localhost:{PORT}/'
+            url = f'http://127.0.0.1:{PORT}/'
             await pg.goto(url); await pg.evaluate('localStorage.clear()')
             await pg.wait_for_function('navigator.serviceWorker.ready.then(() => true)')
             await pg.reload(); await pg.wait_for_function('!!navigator.serviceWorker.controller')
@@ -56,7 +65,7 @@ async def main():
             await pg.select_option('#fModel', 'claude-haiku-5-5')
             print('model saved:', await pg.evaluate('store.prefs.model'))
             print('API calls:', calls)
-            await pg.screenshot(path='/tmp/pwa-route.png')
+            await pg.screenshot(path=str(OUT_DIR / 'pwa-route.png'))
             # update prompt: rebuild with a new version, then ask the worker to check
             subprocess.run([sys.executable, str(ROOT / 'build.py')], check=True, stdout=subprocess.DEVNULL)
             await pg.evaluate('navigator.serviceWorker.getRegistration().then(r => r.update())')
