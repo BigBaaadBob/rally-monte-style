@@ -31,12 +31,12 @@ try {
   const raw = localStorage.getItem(LS_KEY);
   if (raw) { const s = JSON.parse(raw); store = { ...store, ...s, prefs: { ...store.prefs, ...(s.prefs || {}) } }; }
 } catch (e) { lsOK = false; }
-for (const r of Object.values(store.rallies)) if (r.speedo === '' || r.speedo == null) r.speedo = SPEEDO_START;
+for (const r of Object.values(store.rallies)) { if (r.speedo === '' || r.speedo == null) r.speedo = SPEEDO_START; if (typeof r.vehicle !== 'string') r.vehicle = ''; }
 
 function newId() { return 'r' + now().toString(36) + Math.random().toString(36).slice(2, 7); }
 function blankRally() {
   return { id: newId(), name: '', date: (d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`)(new Date()),
-    crew: { driver: '', navigator: '', passengers: [] }, cn: '', ocf: 1, speedo: SPEEDO_START,
+    crew: { driver: '', navigator: '', passengers: [] }, vehicle: '', cn: '', ocf: 1, speedo: SPEEDO_START,
     rows: [], taEvents: [], created: now(), updated: now() };
 }
 const R = () => store.rallies[store.cur] || null;
@@ -74,7 +74,7 @@ const Cloud = {
         const v = d.data(); if (!v || !v.rally || !v.rally.id) continue;
         const loc = store.rallies[v.rally.id];
         // snapshot data is frozen: keep a mutable deep copy
-        if (!loc || (v.rally.updated || 0) > (loc.updated || 0)) { store.rallies[v.rally.id] = JSON.parse(JSON.stringify(v.rally)); pulled++; }
+        if (!loc || (v.rally.updated || 0) > (loc.updated || 0)) { const cp = JSON.parse(JSON.stringify(v.rally)); if (typeof cp.vehicle !== 'string') cp.vehicle = ''; store.rallies[cp.id] = cp; pulled++; }
         else if ((loc.updated || 0) > (v.rally.updated || 0)) this.pending.add(loc.id);
       }
       for (const id of Object.keys(store.rallies)) if (!snap.docs.some(d => d.id === id)) this.pending.add(id);
@@ -224,7 +224,7 @@ function renderSetup() {
     <label for="fClose">Highlight adjacent Route Instructions this close or closer (vehicle miles)</label>
     <input id="fClose" inputmode="decimal" value="${esc(r.closeMi ?? 0.5)}" style="max-width:160px">
   </div>
-  <div class="card"><h2>Crew</h2>
+  <div class="card"><h2>Crew and vehicle</h2>
     <div class="grid2">
       <div><label for="fDrv">Driver</label><input id="fDrv" value="${esc(c.driver)}" autocomplete="off"></div>
       <div><label for="fNav">Navigator</label><input id="fNav" value="${esc(c.navigator)}" autocomplete="off"></div>
@@ -232,6 +232,7 @@ function renderSetup() {
     <label>Passengers</label>
     <div id="paxList">${(c.passengers || []).map((p, i) => `<div class="row" style="margin-bottom:6px"><input data-pax="${i}" value="${esc(p)}" style="flex:1"><button data-paxdel="${i}" class="danger">Remove</button></div>`).join('')}</div>
     <button id="btnPax">Add passenger</button>
+    <label for="fVeh">Vehicle</label><input id="fVeh" value="${esc(r.vehicle || '')}" autocomplete="off">
   </div>
   <div class="card"><h2>Display</h2>
     <div class="grid2">
@@ -258,6 +259,7 @@ function renderSetup() {
   $('fCls').onchange = e => { r.cls = e.target.value; save(r); renderHeader(); };
   bind('fDrv', v => c.driver = v);
   bind('fNav', v => c.navigator = v);
+  bind('fVeh', v => r.vehicle = v);
   $('paxList').querySelectorAll('[data-pax]').forEach(el => el.addEventListener('input', () => { c.passengers[+el.dataset.pax] = el.value; save(r); }));
   $('paxList').querySelectorAll('[data-paxdel]').forEach(el => el.onclick = () => { c.passengers.splice(+el.dataset.paxdel, 1); save(r); renderSetup(); });
   $('btnPax').onclick = () => { c.passengers.push(''); save(r); renderSetup(); const ins = $('paxList').querySelectorAll('input'); ins[ins.length - 1].focus(); };
@@ -752,6 +754,7 @@ function renderData() {
       if (!Array.isArray(src.rows)) throw new Error('no rows');
       const nr = { ...blankRally(), ...src, id: newId(), updated: now() };
       nr.rows = nr.rows.map(Core.normRow); nr.crew = { driver: '', navigator: '', passengers: [], ...(src.crew || {}) };
+      if (typeof nr.vehicle !== 'string') nr.vehicle = '';
       if (store.rallies[src.id]) nr.name = (nr.name || 'Rally') + ' (imported)';
       store.rallies[nr.id] = nr; store.cur = nr.id; save(nr); toast('Imported ' + (nr.name || 'rally')); renderAll();
     } catch (err) { toast('That file is not a rally JSON export'); }
