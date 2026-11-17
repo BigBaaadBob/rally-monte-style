@@ -66,6 +66,8 @@ Merging is done by the owner on GitHub after review.
 
 - Briefs are written in a separate claude.ai chat and posted as an issue comment headed "Brief for #n". This session cannot see that chat; the issue comment is the only hand-off.
 - Don't push, open pull requests, or switch branches outside these skills unless I ask explicitly. If I ask to push or open a PR, suggest `/ship` instead.
+- Never offer `/start-issue`, `/ship`, or `/finish` as a choice or button; they run only when the owner types them, so a button for one always fails. When implementation is done and tests pass, end with a plain line such as "Ready to ship. Type `/ship`." with no multiple-choice question.
+- Never offer, suggest, or enable Auto-fix or auto-merge for a PR, and don't ask about them. Fixes to an open PR are made on its branch in a local session and pushed with `/ship`, so the DESIGN.md check, the test run, and the secrets and personal-information scan always apply. Reason: this repo is public, and Auto-fix can be woken by anyone's PR comment.
 
 ## Privacy and information protection
 - This is a public repo. Test fixtures and the sample rally use the invented crew "Jane Driver" / "John Navigator"; never put real names, private claude.ai links, or real Route Instruction photos in the repo. The public Pages URL (`bigbaaadbob.github.io/rally-monte-style`) is allowed.
