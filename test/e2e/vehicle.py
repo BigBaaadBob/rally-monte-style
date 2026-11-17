@@ -18,8 +18,10 @@ async def main():
         ctx = await b.new_context(viewport={'width': 390, 'height': 844}, has_touch=True, is_mobile=True)
         pg = await ctx.new_page(); capture_errors(pg, label='vehicle')
         await pg.goto(APP_URL); await pg.evaluate('localStorage.clear()'); await pg.reload()
-        await pg.click('#btnNewSample')
+        await pg.click('#btnNew')
         check(await pg.evaluate("R().vehicle") == '', 'a new rally has an empty Vehicle')
+        await pg.click('#tabs button[data-v=rallies]'); await pg.click('#btnNewSample')
+        check(await pg.evaluate("R().vehicle") == 'Rally Car', 'a rally from the sample has Vehicle "Rally Car" (DESIGN Scope)')
 
         # Placement: card heading, and a full-width Vehicle field below Passengers and Add passenger
         for w, h in LAYOUTS:

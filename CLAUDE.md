@@ -83,11 +83,11 @@ Source files must never contain `</script` (the build asserts this). Edit `src/`
 
 **Core vs. UI split.**
 - `src/core.js` holds pure computation, with no DOM and no clock: time parsing and formatting, `normRow`, `mergeRows` (merge by RI and sort, keeping completion state), `compute` (legs, restarts, VM, TT, TA, estimates, close rows), CSV export, `parseCSV` (CSV import), and `parseOCR` (extracting JSON rows from model replies). It is a UMD-style IIFE: it exports via `module.exports` for Node tests, or sets `window.Core` in the browser. Keep it free of side effects so `test/core.test.js` can `require` it.
-- `src/sample.js` is the invented "Desert Loop" rally, used by the unit tests and by the app's sample button. It uses the same dual export pattern.
+- `src/sample.js` is the invented "Sample Rally" (`{ rally, rows }`: details and rows), used by the unit tests and by the New from sample button. It uses the same dual export pattern.
 - `src/app.js` is the whole UI: tabs (Rallies, Route, Run, Data), modals, and storage. `R()` returns the current rally.
 
 **Computation rules that are easy to break** (see DESIGN.md "Computation"):
-- A restart (OM printed `x.xx/0.00`) starts a new leg at VM 0 and TA 0. The first row is *not* forced to be a restart. Rows before the first restart form their own leg (`leg: null`).
+- The first row starts leg 1 (it need not be a restart; there is no `leg: null`). Each later restart (OM printed `x.xx/0.00`) starts a new leg at VM 0 and TA 0. A bare `/0.00` is a restart at OM 0.00. A row with no OM has no VM, TT, or estimate and is never close.
 - TA is stored as events `{ri, ta, at}`. Each event applies from its row through the end of the leg, and a later event in the same leg overrides it.
 - Estimated TT = TT of the nearest earlier row with a TT in the same leg + ΔVM ÷ speedometer mph. An estimate locks only when its row is completed.
 - No system clock or sensor value feeds any computation. Timestamps are only logged.

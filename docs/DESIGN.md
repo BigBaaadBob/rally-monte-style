@@ -6,12 +6,15 @@ Moved from the claude.ai "Road Rally" Project. The app was first delivered as a 
 - Reads photos of the Route Instruction pages into a table of Route Instructions, merges by RI, and sorts.
 - User-visible text calls both the source pages and the app's table Route Instructions; RI means only a single Route Instruction; never Route Table, RT, RIs, or route information.
 - Adds VM and TT columns. OM and CZT are hidden on the Run screen.
-- Prep: rally name, date, crew (driver, navigator, and passengers), vehicle (free text, optional; Crew and vehicle card; shown only on the set-up form), car number (CN), Class (A, B, C, or D; same line as OCF), OCF, and the close-RI limit. Internet is allowed.
+- Prep: rally name, date, crew (driver, navigator, and passengers), vehicle (free text, optional; Crew and vehicle card; shown only on the set-up form), car number (CN), Class (A, B, C, or D; same line as OCF), OCF (always displayed with four decimals, e.g. 1.0100; the Data summary does too), and the close-RI limit. Internet is allowed.
+- New from sample (Rallies tab): each tap creates a new rally from the built-in sample and opens set-up. Name "Sample Rally", today's date, CN 7, Class C, OCF 1.0100, vehicle "Rally Car", crew Jane Driver and John Navigator with no passengers, speedometer at its start value, the default close limit, no TA, nothing completed.
 - Run: shows the first uncompleted RI. Small Undo button and a 58 px Complete button; tap a ✓ to un-complete that row. No internet needed.
 
 ## Computation
 - VM = OM × OCF. A restart (OM printed "x.xx/0.00") starts a new frame at VM 0.
-- The first row is NOT forced to be a restart, so a test run can start mid-rally. Rows before the first restart use OM × OCF in the printed frame and form their own leg for TA and estimates.
+- The first row starts the first leg. Each later restart (OM printed "x.xx/0.00") starts a new leg at VM 0 and TA 0. The first row need not be printed "/0.00", because pages may be read in any order; there is no check or warning on it. There is no separate leg for rows before the first restart: they are in leg 1, with VM = OM × OCF in the printed frame. A leg is identified by the RI of its first row.
+- A bare "/0.00" OM is a restart at OM 0.00. This is how a rally's start RI is printed. It is accepted wherever OMs are read: row entry, CSV and JSON paste, and both reading prompts.
+- A row with no OM (for example the finish RI) shows no VM, no TT, and no estimate. It is skipped when checking close rows and can be completed like any other row.
 - TT = CZT + CN minutes + TA.
 - TA (confirmed by the owner): a TA entered on a row applies from that row through the row before the next restart. Rows before it keep their TT, and a restart starts at TA 0. A later TA in the same leg replaces the earlier one from its own row on. The app stores TA as events {ri, ta, at}.
 - Estimator (confirmed by the owner): estimated TT = TT of the nearest earlier row in the same leg that has a TT + ΔVM ÷ speedometer mph. ΔVM and the speedometer are both in vehicle units, so the OCF is accounted for.
@@ -43,14 +46,14 @@ Moved from the claude.ai "Road Rally" Project. The app was first delivered as a 
 - Read in a Claude chat… (for the Claude Android app, where the photo picker does nothing in artifacts): copy the instructions, attach the photos in a normal Claude chat, then paste Claude's whole reply into Paste rows. The JSON is extracted from the reply even with surrounding prose and [brackets] in instruction text, and several fenced blocks are combined. Paste rows also accepts CSV.
 - A copied photo can be pasted on the Route tab where the device allows it.
 - Add page photos opens a picker that accepts several images at once, so a whole rally can be added in one go.
-- Paste rows also accepts a CSV exported by the app: it skips the rally details (including the Vehicle line) above the `RI,…` header line, reads the RI, OM (a `x.xx/0.00` OM marks a restart), CZT, CP, Instruction, and Info columns by header name, and ignores the computed columns. Completion marks and TA entries are not restored; the JSON export is the full record.
+- Paste rows also accepts a CSV exported by the app: it skips the rally details (including the Vehicle line) above the `RI,…` header line, reads the RI, OM (a `x.xx/0.00` or bare `/0.00` OM marks a restart), CZT, CP, Instruction, and Info columns by header name, and ignores the computed columns. Completion marks and TA entries are not restored; the JSON export is the full record.
 - Paste rows with no rows found shows "No rows found in that text", keeps the dialog open, and leaves the table unchanged.
 
 ## Testing
 - The core is pure (no DOM, no clock) and is unit-tested under Node.
 - Playwright runs at 390 and 360 px portrait and 844 px landscape. These are the supported layouts.
 - A mock of the Claude runtime (frozen db snapshots plus a sample reader) covers the account-copy and photo-merge path.
-- The tests use the built-in invented sample rally, "Desert Loop" (`src/sample.js`).
+- The tests use the built-in invented sample rally, "Sample Rally" (`src/sample.js`).
 - The offline copy's stripping of security-policy meta tags and injected scripts is verified against a simulated injected CSP.
 
 ## Hosting and install

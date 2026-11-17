@@ -69,7 +69,7 @@
     let om = x.om, restart = !!x.restart;
     if (typeof om === 'string') {
       const m = om.replace(/\s/g, '').match(/^(\d*\.?\d+)?\/0?\.?0+$/);   // "13.27/0.00" or "/0.00"
-      if (m) { restart = true; om = m[1] != null ? +m[1] : null; } else om = num(om);
+      if (m) { restart = true; om = m[1] != null ? +m[1] : 0; } else om = num(om);
     } else om = num(om);
     let ri = x.ri;
     if (typeof ri === 'string') { ri = ri.trim(); if (/^\d+$/.test(ri)) ri = +ri; }
@@ -109,8 +109,9 @@
   //  ta (effective), taSet (a TA was entered at this row), tt,
   //  est (locked value if locked, else live), estLive, estLocked, estAnchor,
   //  gapNext (VM to the next row, vehicle miles), close (within rally.closeMi, default 0.5, of a neighbour)
-  // Rows before the first restart form an unnamed leg (leg null) so a rally can be
-  // test-run from the middle; their VM is OM x OCF in whatever frame the OM is printed.
+  // The first row starts the first leg (key = its RI), restart or not; there is no unnamed leg.
+  // Rows before the first restart have VM = OM x OCF in whatever frame the OM is printed.
+  // A row with no OM has no vm, tt-estimate, or close flag.
   // TA model: rally.taEvents = [{ri, ta, at}]. A TA entered at row R applies from R through
   // the row before the next restart; a later TA in the same leg replaces it from its row on.
   // A restart starts at TA 0.
@@ -126,14 +127,14 @@
     const events = rally.taEvents || [];
     const speedo = +rally.speedo > 0 ? +rally.speedo : null;
     const out = [];
-    let leg = null, legRows = [], ta = 0;
+    let leg = rows.length ? String(rows[0].ri) : null, legRows = [], ta = 0;
     rows.forEach((r, i) => {
       const restart = !!r.restart;
       if (restart) { leg = String(r.ri); legRows = []; ta = 0; }
       const ev = events.find(e => sameRI(e.ri, r.ri));
       if (ev) ta = +ev.ta || 0;
       const vm = restart ? 0 : (r.om == null ? null : r.om * ocf);
-      const vmPrevEnd = restart && r.om != null ? r.om * ocf : null;
+      const vmPrevEnd = restart && i > 0 && r.om != null ? r.om * ocf : null;   // no previous frame before the first row
       const tt = r.czt == null ? null : r.czt + cnSec + ta;
       let estLive = null, estAnchor = null;
       if (tt == null && vm != null && speedo) {
@@ -169,8 +170,9 @@
   const activeIndex = rally => (rally.rows || []).findIndex(r => !r.done);
 
   function legOf(rally, idx) {
-    let leg = null;
-    (rally.rows || []).forEach((r, i) => { if (i <= idx && r.restart) leg = String(r.ri); });
+    const rows = rally.rows || [];
+    let leg = idx >= 0 && rows.length ? String(rows[0].ri) : null;
+    rows.forEach((r, i) => { if (i <= idx && r.restart) leg = String(r.ri); });
     return leg;
   }
 

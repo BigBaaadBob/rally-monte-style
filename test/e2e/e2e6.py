@@ -32,7 +32,7 @@ NEXT_IN = """(() => {
 ACTIVE_POS = """(() => {
   const w = document.getElementById('runWrap'), tr = w.querySelector('tr.active');
   return {ri: tr.children[1].textContent.trim(), scroll: w.scrollTop, rel: tr.getBoundingClientRect().top - w.getBoundingClientRect().top,
-          head: w.querySelector('thead').offsetHeight, h: tr.offsetHeight, atEnd: w.scrollTop >= w.scrollHeight - w.clientHeight - 1};
+          head: w.querySelector('thead').offsetHeight, h: tr.offsetHeight, prev: tr.previousElementSibling ? tr.previousElementSibling.offsetHeight : 0, atEnd: w.scrollTop >= w.scrollHeight - w.clientHeight - 1};
 })()"""
 
 # Pick rows by property: a completed row with a locked estimate, and an open row whose estimate moves when the speedometer changes.
@@ -73,7 +73,7 @@ async def main():
 
         # DESIGN l.28: Complete scrolls so the new active RI sits near the top with one row above it.
         def near_top(pos):
-            lo, hi = pos['head'] + pos['h'] / 2, pos['head'] + pos['h'] * 1.5     # header + one row above, +/- half a row
+            lo, hi = pos['head'] + pos['prev'] / 2, pos['head'] + pos['prev'] * 1.5     # header + the one row above (its own height), +/- half a row
             return lo <= pos['rel'] <= hi if not pos['atEnd'] else pos['rel'] >= lo
         await pg.click('#btnDone'); await pg.wait_for_timeout(600)
         pos = await pg.evaluate(ACTIVE_POS)
