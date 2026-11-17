@@ -16,76 +16,129 @@ assert.strictEqual(Core.parseRel(''), 0);
 assert.strictEqual(Core.parseRel('abc'), null);
 assert.strictEqual(Core.fmtRel(-65), '-1:05');
 
-// normalise "/0.00"
+
+// normalise "/0.00" (DESIGN Computation: a bare "/0.00" is a restart at OM 0.00)
 let n = Core.normRow({ ri: '42', om: '8.55/0.00', czt: '09:12:00' });
 assert.strictEqual(n.ri, 42); assert.strictEqual(n.om, 8.55); assert.strictEqual(n.restart, true);
-n = Core.normRow({ ri: 1, om: '/0.00' }); assert.strictEqual(n.restart, true); assert.strictEqual(n.om, null);
+n = Core.normRow({ ri: 1, om: '/0.00' }); assert.strictEqual(n.restart, true); assert.strictEqual(n.om, 0, 'bare /0.00 is OM 0.00');
+n = Core.normRow({ ri: 1, om: ' / 0.00 ' }); assert.strictEqual(n.restart, true); assert.strictEqual(n.om, 0);
+n = Core.normRow({ ri: 2, om: '1.25' }); assert.strictEqual(n.restart, false); assert.strictEqual(n.om, 1.25);
+n = Core.normRow({ ri: 3, om: null }); assert.strictEqual(n.restart, false); assert.strictEqual(n.om, null, 'no OM stays null');
+assert.strictEqual(Core.parseOCR('```json\n[{"ri":1,"om":"/0.00"}]\n```').map(Core.normRow)[0].restart, true, 'bare /0.00 in pasted JSON');
+assert.strictEqual(Core.parseOCR('```json\n[{"ri":1,"om":"/0.00"}]\n```').map(Core.normRow)[0].om, 0);
+{ const b = Core.parseCSV('RI,OM,CZT,CP,Instruction,Info\n1,/0.00,09:00:00,1,START,\n2,0.50,,,L,').map(Core.normRow);
+  assert.deepStrictEqual([b[0].restart, b[0].om, b[1].restart, b[1].om], [true, 0, false, 0.5], 'bare /0.00 in CSV'); }
 
 // merge + sort: shuffled input, then a page re-read replaces text but keeps completion
-let m = Core.mergeRows([], SAMPLE.slice(8).concat(SAMPLE.slice(0, 8)));
-assert.strictEqual(m.added, 17);
-assert.deepStrictEqual(m.rows.map(r => r.ri), SAMPLE.map(r => r.ri));
+const SR = SAMPLE.rows;
+let m = Core.mergeRows([], SR.slice(8).concat(SR.slice(0, 8)));
+assert.strictEqual(m.added, SR.length);
+assert.deepStrictEqual(m.rows.map(r => r.ri), SR.map(r => r.ri));
 m.rows[0].done = true;
-m = Core.mergeRows(m.rows, [{ ri: 41, om: 8.43, instr: 'fixed' }, { ri: '54A', om: 7.40, instr: 'inserted' }]);
+const anchorRI = SR[5].ri;
+m = Core.mergeRows(m.rows, [{ ri: SR[0].ri, om: '/0.00', instr: 'fixed' }, { ri: anchorRI + 'A', om: SR[5].om, instr: 'inserted' }]);
 assert.strictEqual(m.replaced, 1); assert.strictEqual(m.added, 1);
-assert.strictEqual(m.rows[0].done, true); assert.strictEqual(m.rows[0].om, 8.43);
-assert.strictEqual(m.rows.findIndex(r => r.ri === '54A'), m.rows.findIndex(r => r.ri === 54) + 1);
+assert.strictEqual(m.rows[0].done, true); assert.strictEqual(m.rows[0].instr, 'fixed');
+assert.strictEqual(m.rows.findIndex(r => r.ri === anchorRI + 'A'), m.rows.findIndex(r => r.ri === anchorRI) + 1);
 
-// compute
-const base = () => ({ cn: 12, ocf: 1.02, taEvents: [], speedo: 30, rows: Core.mergeRows([], SAMPLE).rows });
-let R = base(), C = Core.compute(R);
-assert.strictEqual(C[0].restart, false, 'first row is not forced to be a restart');
-assert.strictEqual(C[0].leg, null);
-near(C[0].vm, 8.42 * 1.02, 1e-9, 'mid-rally start: VM = OM x OCF in the printed frame');
-assert.strictEqual(C[1].restart, true); assert.strictEqual(C[1].leg, '42');
-assert.strictEqual(C[1].vm, 0); near(C[1].vmPrevEnd, 8.55 * 1.02, 1e-9, 'restart shows prior-frame VM');
-near(C[3].vm, 1.90 * 1.02, 1e-9, 'VM = OM x OCF');
-assert.strictEqual(Core.fmtTOD(C[1].tt), '09:24:00', 'TT = CZT + CN minutes');
-assert.strictEqual(Core.fmtTOD(C[3].tt), '09:26:30');
-assert.strictEqual(C[0].tt, null);
+// Independent expectation of compute, written from the DESIGN Computation rules (not from Core's output).
+function expected(rally) {
+  const rows = rally.rows, ocf = +rally.ocf, cn = rally.cn * 60, spd = rally.speedo, ev = rally.taEvents || [];
+  let leg = -1, start = 0;
+  const L = rows.map((r, i) => { if (i === 0 || r.restart) { leg++; start = i; } return leg; });
+  const legStart = rows.map((r, i) => { let j = i; while (j > 0 && L[j - 1] === L[i]) j--; return j; });
+  const vm = rows.map(r => r.restart ? 0 : r.om == null ? null : r.om * ocf);
+  const prevEnd = rows.map((r, i) => r.restart && i > 0 && r.om != null ? r.om * ocf : null);
+  const ta = rows.map((r, i) => { for (let j = i; j >= 0 && L[j] === L[i]; j--) { const e = ev.find(e => String(e.ri) === String(rows[j].ri)); if (e) return e.ta; } return 0; });
+  const tt = rows.map((r, i) => r.czt == null ? null : r.czt + cn + ta[i]);
+  const est = rows.map((r, i) => {
+    if (tt[i] != null || vm[i] == null || !spd) return null;
+    for (let j = i - 1; j >= 0 && L[j] === L[i]; j--) if (tt[j] != null && vm[j] != null) return tt[j] + Math.max(0, vm[i] - vm[j]) / spd * 3600;
+    return null; });
+  const lim = rally.closeMi ?? 0.5, close = rows.map(() => false);
+  for (let i = 0; i + 1 < rows.length; i++) {
+    const bEnd = rows[i + 1].restart ? prevEnd[i + 1] : vm[i + 1];
+    if (vm[i] == null || bEnd == null) continue;
+    const g = bEnd - vm[i]; if (g < -1e-9) continue;
+    if (g <= lim + 1e-9) close[i] = close[i + 1] = true; }
+  return { L, legStart, vm, prevEnd, ta, tt, est, close };
+}
+function agree(rally, label) {
+  const C = Core.compute(rally), E = expected(rally);
+  rally.rows.forEach((r, i) => {
+    const w = `${label} row ${i}`;
+    assert.strictEqual(C[i].leg, String(rally.rows[E.legStart[i]].ri), w + ' leg');
+    for (const k of ['vm', 'vmPrevEnd', 'tt', 'est']) {
+      const want = { vm: E.vm, vmPrevEnd: E.prevEnd, tt: E.tt, est: E.est }[k][i];
+      if (want == null) assert.strictEqual(C[i][k], null, `${w} ${k} should be null`); else near(C[i][k], want, 1e-6, `${w} ${k}`); }
+    assert.strictEqual(C[i].ta, E.ta[i], w + ' ta');
+    assert.strictEqual(C[i].close, E.close[i], w + ' close'); });
+  return C;
+}
 
-// estimator: RI 43 anchored on RI 42 (VM 0), dVM = .62*1.02 at speedo 30 (vehicle mph)
-near(C[2].est, T('09:24:00') + 0.62 * 1.02 / 30 * 3600, 1e-6, 'estimate RI 43');
-assert.strictEqual(C[2].estAnchor, 42);
-// RI 48 anchors on CP 25 (RI 47)
-near(C[7].est, T('09:30:00') + (4.03 - 3.88) * 1.02 / 30 * 3600, 1e-6, 'estimate RI 48');
-assert.strictEqual(C[7].estAnchor, 47);
+// compute on the sample
+const base = () => ({ cn: 12, ocf: 1.02, taEvents: [], speedo: 30, rows: Core.mergeRows([], SAMPLE.rows).rows });
+let R = base(), C = agree(R, 'sample');
+// rule 1: the first row starts leg 1; no row has leg null
+assert.ok(C.every(c => c.leg != null), 'no row has leg null');
+assert.strictEqual(C[0].leg, String(R.rows[0].ri)); assert.strictEqual(C[0].restart, true);
+assert.strictEqual(C[0].vm, 0); assert.strictEqual(C[0].vmPrevEnd, null, 'no previous frame before the first row');
+assert.strictEqual(new Set(C.map(c => c.leg)).size, 5, 'the sample has 5 legs');
+assert.strictEqual(new Set(C.map(c => c.leg)).size, R.rows.filter(r => r.restart).length, 'one leg per restart');
+// a later restart: VM 0 with the previous frame's end shown, TT = CZT + CN
+const k2 = C.findIndex((c, i) => i > 0 && c.restart), r2 = R.rows[k2];
+assert.strictEqual(C[k2].vm, 0); near(C[k2].vmPrevEnd, r2.om * 1.02, 1e-9, 'restart shows prior-frame VM');
+assert.strictEqual(C[k2].leg, String(r2.ri));
+assert.strictEqual(Core.fmtTOD(C[k2].tt), Core.fmtTOD(r2.czt + 12 * 60), 'TT = CZT + CN minutes');
+// plain row: VM = OM x OCF
+const kp = R.rows.findIndex(r => !r.restart && typeof r.om === 'number');
+near(C[kp].vm, R.rows[kp].om * 1.02, 1e-9, 'VM = OM x OCF');
+// the sample exercises estimates, a close pair across a restart, and a row with no OM (non-vacuous)
+const kest = C.findIndex(c => c.est != null);
+assert.ok(kest >= 0, 'sample has a row showing an estimate'); assert.strictEqual(R.rows[kest].czt, null);
+assert.ok(C.some((c, i) => i > 0 && C[i].restart && C[i - 1].close && c.close && C[i - 1].gapNext <= 0.5 + 1e-9), 'sample has a close pair spanning a restart');
+// rule 3: a row with no OM (the finish RI)
+const kno = R.rows.findIndex(r => r.om == null);
+assert.ok(kno >= 0, 'sample has a row with no OM');
+assert.strictEqual(C[kno].vm, null); assert.strictEqual(C[kno].tt, null); assert.strictEqual(C[kno].est, null); assert.strictEqual(C[kno].close, false);
 // OCF cancels: same estimate as official distance at true speed 30/1.02
-near(C[7].est - C[6].tt, (4.03 - 3.88) / (30 / 1.02) * 3600, 1e-6, 'speedo affected by OCF');
-// RI 41 (first leg, no TT before it) has no estimate
-assert.strictEqual(C[0].est, null);
+{ const e = C.findIndex(c => c.estAnchor != null), a = R.rows.findIndex(r => r.ri === C[e].estAnchor), omA = R.rows[a].restart ? 0 : R.rows[a].om;
+  near(C[e].est - C[a].tt, (R.rows[e].om - omA) / (30 / 1.02) * 3600, 1e-6, 'speedo affected by OCF'); }
 // no speedo -> no estimates
-assert.strictEqual(Core.compute({ ...R, speedo: null })[2].est, null);
+assert.ok(Core.compute({ ...R, speedo: null }).every(c => c.est == null));
 
 // operation: complete, TA, freeze, restart reset
 assert.strictEqual(Core.activeIndex(R), 0);
 R.rows = Core.completeActive(R, 1); R.rows = Core.completeActive(R, 2); R.rows = Core.completeActive(R, 3);
 assert.strictEqual(Core.activeIndex(R), 3);
-assert.strictEqual(Core.legOf(R, 3), '42');
-R.taEvents = Core.setTA(R, 3, 30, 10);                  // TA +30 s entered while on RI 44
-C = Core.compute(R);
-assert.strictEqual(Core.fmtTOD(C[1].tt), '09:24:00', 'rows before the TA row unchanged');
-assert.strictEqual(C[2].ta, 0);
-assert.strictEqual(Core.fmtTOD(C[3].tt), '09:27:00', 'TA row gets TA'); assert.strictEqual(C[3].taSet, true);
-assert.strictEqual(Core.fmtTOD(C[12].tt), '09:34:45', 'rest of leg gets TA');
-near(C[7].est, T('09:30:30') + (4.03 - 3.88) * 1.02 / 30 * 3600, 1e-6, 'estimate follows TA');
+const kta = 3, lastOfLeg0 = R.rows.findIndex((r, i) => i > 0 && r.restart) - 1;
+assert.strictEqual(Core.legOf(R, kta), C[kta].leg);
+assert.strictEqual(Core.legOf(R, k2), String(r2.ri));
+R.taEvents = Core.setTA(R, kta, 30, 10);                // TA +30 s entered on the 4th row
+C = agree(R, 'TA');
+assert.strictEqual(C[kta - 1].ta, 0, 'rows before the TA row unchanged'); assert.strictEqual(C[kta].ta, 30);
+assert.strictEqual(C[kta].taSet, true); assert.strictEqual(C[lastOfLeg0].ta, 30, 'rest of leg gets TA');
+assert.strictEqual(C[k2].ta, 0, 'a restart starts at TA 0');
 // re-entering TA at the same row replaces it; a later TA replaces from its row on
-R.taEvents = Core.setTA(R, 3, 20, 11);
+R.taEvents = Core.setTA(R, kta, 20, 11);
 assert.strictEqual(R.taEvents.length, 1);
-R.taEvents = Core.setTA(R, 5, -15, 12);
-C = Core.compute(R);
-assert.strictEqual(C[4].ta, 20); assert.strictEqual(C[5].ta, -15); assert.strictEqual(C[16].ta, -15);
+R.taEvents = Core.setTA(R, kta + 2, -15, 12);
+C = agree(R, 'TA2');
+assert.strictEqual(C[kta + 1].ta, 20); assert.strictEqual(C[kta + 2].ta, -15); assert.strictEqual(C[lastOfLeg0].ta, -15);
+// an estimate follows the TA
+{ const Rt = base(); Rt.taEvents = Core.setTA(Rt, k2, 30);
+  const Ct = agree(Rt, 'TA on a restart'), b = Core.compute(base()), e = Ct.findIndex((c, i) => i > k2 && c.estAnchor === Rt.rows[k2].ri);
+  assert.ok(e > 0, 'an estimate is anchored on the restart row'); near(Ct[e].est - b[e].est, 30, 1e-6, 'estimate follows TA'); }
 // un-completing an earlier row does not pull the TA back onto it
 assert.strictEqual(Core.compute({ ...R, rows: Core.uncomplete(R, 1) })[1].ta, 0);
-// a later restart is a new leg with TA 0
-const R2 = base(); R2.rows = R2.rows.map(r => r.ri === 50 ? { ...r, restart: true } : r);
-R2.taEvents = Core.setTA(R2, 3, 30);
-C = Core.compute(R2);
-assert.strictEqual(C[8].ta, 30);
-assert.strictEqual(C[9].leg, '50'); assert.strictEqual(C[9].ta, 0);
-assert.strictEqual(Core.fmtTOD(C[9].tt), '09:32:30', 'TA zero after restart');
-assert.strictEqual(C[9].vm, 0);
-near(C[10].vm, 6.40 * 1.02, 1e-9, 'VM keeps OM frame after restart');
+// a restart set on a later row is a new leg with TA 0
+{ const R2 = base(), kr = 5; R2.rows = R2.rows.map((r, i) => i === kr ? { ...r, restart: true } : r);
+  R2.taEvents = Core.setTA(R2, kta, 30);
+  const C2 = agree(R2, 'restart added');
+  assert.strictEqual(C2[kr - 1].ta, 30);
+  assert.strictEqual(C2[kr].leg, String(R2.rows[kr].ri)); assert.strictEqual(C2[kr].ta, 0);
+  assert.strictEqual(C2[kr].vm, 0);
+  near(C2[kr + 1].vm, R2.rows[kr + 1].om * 1.02, 1e-9, 'VM keeps OM frame after restart'); }
 
 // un-complete
 const last = Core.lastCompleted(R);
@@ -93,43 +146,70 @@ assert.strictEqual(last, 2);
 R.rows = Core.uncomplete(R, last);
 assert.strictEqual(Core.activeIndex(R), 2);
 assert.strictEqual(R.rows[2].ttDone, null);
-assert.strictEqual(R.rows[1].ttDone, T('09:24:00'), 'TT recorded at completion');
+assert.strictEqual(R.rows[0].ttDone, R.rows[0].czt + 12 * 60, 'TT recorded at completion');
 
-// first-row restart only if printed so
-assert.strictEqual(Core.compute({ ...base(), rows: Core.mergeRows([], [{ ri: 5, om: '/0.00', czt: '10:00:00' }, { ri: 6, om: 1 }]).rows })[0].restart, true);
-// legs before the first restart still estimate from an earlier TT in that leg
-{ const Rm = { cn: 0, ocf: 1, speedo: 60, taEvents: [], rows: Core.mergeRows([], [{ ri: 1, om: 5, czt: '10:00:00' }, { ri: 2, om: 6 }]).rows };
-  near(Core.compute(Rm)[1].est, T('10:01:00'), 1e-9, 'estimate in unnamed first leg'); }
+// rule 1: the first row need not be a restart; it starts leg 1 and keeps the printed-frame VM
+{ const Rm = { cn: 0, ocf: 1, speedo: 60, taEvents: [], rows: Core.mergeRows([], [
+    { ri: 5, om: 3, czt: '10:00:00' }, { ri: 6, om: 4 }, { ri: 7, om: '2.00/0.00', czt: '10:30:00' }, { ri: 8, om: 2.5 }]).rows };
+  const Cm = agree(Rm, 'first row not a restart');
+  assert.strictEqual(Cm[0].restart, false); assert.strictEqual(Cm[0].leg, '5'); assert.strictEqual(Cm[1].leg, '5');
+  assert.strictEqual(Cm[2].leg, '7'); assert.ok(Cm.every(c => c.leg != null));
+  near(Cm[0].vm, 3, 1e-9, 'VM = OM x OCF in the printed frame');
+  near(Cm[1].est, T('10:01:00'), 1e-9, 'estimate in leg 1 from an earlier TT');
+  assert.strictEqual(Core.legOf(Rm, 1), '5'); assert.strictEqual(Core.legOf(Rm, 3), '7');
+  Rm.taEvents = Core.setTA(Rm, 0, 30);
+  const Ct = Core.compute(Rm);
+  assert.strictEqual(Ct[1].ta, 30, 'TA in leg 1'); assert.strictEqual(Ct[2].ta, 0, 'restart resets TA'); }
+// rule 2: a bare /0.00 first row is a restart at OM 0.00
+{ const Rb = { cn: 0, ocf: 1.01, speedo: 60, taEvents: [], rows: Core.mergeRows([], [{ ri: 5, om: '/0.00', czt: '10:00:00' }, { ri: 6, om: 1 }]).rows };
+  const Cb = agree(Rb, 'bare restart');
+  assert.strictEqual(Cb[0].restart, true); assert.strictEqual(Rb.rows[0].om, 0); assert.strictEqual(Cb[0].vm, 0); }
+// rule 3: a row with no OM has no VM, TT, or estimate, is never close, and can be completed
+{ const Rn = { cn: 0, ocf: 1, speedo: 60, taEvents: [], rows: Core.mergeRows([], [
+    { ri: 1, om: '/0.00', czt: '10:00:00' }, { ri: 2, om: 0.2 }, { ri: 3, om: null, instr: 'finish' }, { ri: 4, om: 0.3 }]).rows };
+  const Cn = Core.compute(Rn);
+  assert.strictEqual(Cn[2].vm, null); assert.strictEqual(Cn[2].tt, null); assert.strictEqual(Cn[2].est, null);
+  assert.strictEqual(Cn[2].close, false); assert.strictEqual(Cn[2].gapNext, null);
+  assert.strictEqual(Cn[3].close, false, 'a neighbour of a no-OM row is not close because of it');
+  assert.strictEqual(Cn[1].close, true, 'rows with OMs still close to each other');
+  Rn.rows = Core.completeActive(Rn, 1); Rn.rows = Core.completeActive(Rn, 2);
+  assert.strictEqual(Core.activeIndex(Rn), 2);
+  Rn.rows = Core.completeActive(Rn, 3);
+  assert.strictEqual(Rn.rows[2].done, true); assert.strictEqual(Rn.rows[2].ttDone, null); assert.strictEqual(Core.activeIndex(Rn), 3); }
 
-// close rows (VM gap <= 0.5)
-{ const Cc = Core.compute(base());
-  const close = Cc.filter(c => c.close).map(c => c.ri);
-  assert.deepStrictEqual(close, [41, 42, 44, 45, 47, 48, 51, 52, 53, 54, 55, 56]);
-  near(Cc[0].gapNext, 0.13 * 1.02, 1e-9, 'gap into a restart uses previous-frame end');
-  const c3 = Core.compute({ ...base(), closeMi: 0.3 }).filter(c => c.close).map(c => c.ri);
-  assert.deepStrictEqual(c3, [41, 42, 47, 48, 52, 53, 54, 55], 'settable limit');
+// close rows (VM gap <= the limit; DESIGN Computation)
+{ const Cc = agree(base(), 'close 0.5');
+  assert.ok(Cc.some(c => c.close) && Cc.some(c => !c.close), 'close flags are mixed on the sample');
+  const c3 = agree({ ...base(), closeMi: 0.3 }, 'close 0.3');
+  assert.ok(c3.filter(c => c.close).length < Cc.filter(c => c.close).length, 'a tighter limit flags fewer rows');
+  // gap into a restart runs to the previous frame's end
+  const i = Cc.findIndex((c, k) => k > 0 && c.restart);
+  near(Cc[i - 1].gapNext, base().rows[i].om * 1.02 - Cc[i - 1].vm, 1e-9, 'gap into a restart uses previous-frame end');
   assert.strictEqual(Core.closeMi({ closeMi: '' }), 0.5); assert.strictEqual(Core.closeMi({ closeMi: 0.25 }), 0.25); }
 
 // estimate locks: only on completion
-{ const Rd = base(); Rd.rows = Rd.rows.map((r, k) => k < 7 ? { ...r, done: true } : r);   // active = RI 48
-  const e30 = Core.compute(Rd)[7].estLive;
-  Rd.speedo = 45; assert.notStrictEqual(Core.compute(Rd)[7].est, e30, 'uncompleted est follows speedo');
+{ const Rd = base(), e = Core.compute(Rd).findIndex(c => c.estLive != null);
+  Rd.rows = Rd.rows.map((r, k) => k < e ? { ...r, done: true } : r);     // active = the first estimate row
+  const e30 = Core.compute(Rd)[e].estLive;
+  Rd.speedo = 45; assert.notStrictEqual(Core.compute(Rd)[e].est, e30, 'uncompleted est follows speedo');
   Rd.speedo = 30;
   Rd.rows = Core.completeActive(Rd, 5);
-  assert.strictEqual(Rd.rows[7].estLock, e30); assert.strictEqual(Rd.rows[7].ttDone, null);
-  Rd.speedo = 50; Rd.taEvents = Core.setTA(Rd, 6, 20);
-  let c = Core.compute(Rd)[7];
+  assert.strictEqual(Rd.rows[e].estLock, e30); assert.strictEqual(Rd.rows[e].ttDone, null);
+  Rd.speedo = 50; Rd.taEvents = Core.setTA(Rd, e - 1, 20);
+  let c = Core.compute(Rd)[e];
   assert.strictEqual(c.estLocked, true); assert.strictEqual(c.est, e30, 'completed est frozen (speedo and TA)');
-  Rd.rows = Core.uncomplete(Rd, 7);
-  c = Core.compute(Rd)[7];
+  Rd.rows = Core.uncomplete(Rd, e);
+  c = Core.compute(Rd)[e];
   assert.strictEqual(c.estLocked, false); assert.strictEqual(c.est, c.estLive);
   // an old v2 tap lock on an uncompleted row is ignored
-  Rd.rows[8] = { ...Rd.rows[8], estLock: 1, estLockBy: 'tap' };
-  assert.strictEqual(Core.compute(Rd)[8].estLocked, false); }
+  Rd.rows[e + 1] = { ...Rd.rows[e + 1], estLock: 1, estLockBy: 'tap' };
+  assert.strictEqual(Core.compute(Rd)[e + 1].estLocked, false); }
 // CSV
-const csv = Core.toCSV({ ...R, name: 'Desert Loop', crew: { driver: 'Jane Driver', navigator: 'John Navigator', passengers: [] } });
-assert.ok(csv.includes('42,Y,8.55/0.00,8.72/0.00,09:12:00'), 'CSV restart row');
-assert.ok(csv.includes('41,,8.42,8.59,'), 'CSV first row not a restart');
+const csv = Core.toCSV({ ...R, name: SAMPLE.rally.name, crew: { driver: 'Jane Driver', navigator: 'John Navigator', passengers: [] } });
+assert.ok(csv.includes(`${r2.ri},Y,${r2.om.toFixed(2)}/0.00,${(r2.om * 1.02).toFixed(2)}/0.00,${Core.fmtTOD(r2.czt)}`), 'CSV restart row');
+{ const p = R.rows[kp]; assert.ok(csv.includes(`${p.ri},,${p.om.toFixed(2)},${(p.om * 1.02).toFixed(2)},`), 'CSV plain row'); }
+assert.ok(csv.includes(`${R.rows[0].ri},Y,0.00/0.00,0.00,`), 'CSV first row is a restart at OM 0.00 with no previous frame');
+assert.ok(csv.includes(`${R.rows[kno].ri},,,,`), 'CSV row with no OM has empty OM and VM');
 // CSV import: an export re-imports by header name (a restart OM carries the restart); bare lines use RI,OM,CZT,CP,Instruction,Info
 { const rows = Core.parseCSV(csv);
   assert.strictEqual(rows.length, R.rows.length, 'exported CSV re-imports every row');

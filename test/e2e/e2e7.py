@@ -40,6 +40,22 @@ async def main():
         check(ours > 0 and selfhtml.count('<script data-rt') == ours, f"offline copy keeps the app's own scripts ({selfhtml.count('<script data-rt')} of {ours})")
         (OUT_DIR / 'offline.html').write_text(selfhtml, encoding='utf-8')
         await pg.click('#btnNewSample')
+        # DESIGN Scope, New from sample: each tap makes a separate rally with the sample's details; set-up opens.
+        d = await pg.evaluate("(() => { const r = R(); return {name: r.name, cn: r.cn, cls: r.cls, ocf: r.ocf, veh: r.vehicle, crew: r.crew, ta: r.taEvents.length, done: r.rows.filter(x => x.done).length, n: r.rows.length, id: r.id}; })()")
+        sdet = await pg.evaluate("[SAMPLE.rally.name, SAMPLE.rally.cn, SAMPLE.rally.cls, SAMPLE.rally.ocf, SAMPLE.rally.vehicle, SAMPLE.rows.length]")
+        check([d['name'], d['cn'], d['cls'], d['ocf'], d['veh'], d['n']] == sdet and d['ta'] == 0 and d['done'] == 0, f'New from sample copies the sample details ({d})')
+        check(await pg.input_value('#fCls') == d['cls'] and await pg.input_value('#fOCF') == f"{d['ocf']:.4f}", 'set-up opens showing the sample Class and OCF with four decimals')
+        await pg.click('#tabs button[data-v=rallies]'); await pg.click('#btnNewSample')
+        ids = await pg.evaluate("Object.keys(store.rallies).filter(k => store.rallies[k].name === SAMPLE.rally.name).length")
+        check(ids == 2 and await pg.evaluate("R().id") != d['id'], 'a second tap makes a second, separate rally')
+        await pg.evaluate("R().crew.passengers.push('x')")
+        check(await pg.evaluate("store.rallies['%s'].crew.passengers.length" % d['id']) == 0, 'the two rallies do not share crew data')
+        # DESIGN Computation: a row with no OM (the finish RI) can be completed like any other.
+        done_last = await pg.evaluate("(() => { const r = R(); r.rows.forEach(x => x.done = true); const i = r.rows.findIndex(x => x.om == null); r.rows[i].done = false; r.rows.forEach((x, k) => { if (k > i) x.done = true; }); return Core.activeIndex(r) === i; })()")
+        check(done_last, 'the no-OM row can be the active row')
+        await pg.click('#tabs button[data-v=run]'); await pg.click('#btnDone')
+        check(await pg.evaluate("R().rows.every(x => x.done)"), 'completing the no-OM row completes the rally')
+        await pg.evaluate("R().rows.forEach(x => { x.done = false; x.ttDone = null; x.estLock = null; })")
         # DESIGN l.19: the speedometer is saved with the rally (reloading keeps it).
         await pg.click('#tabs button[data-v=run]'); await pg.click('[data-sp="5"]'); await pg.click('[data-sp="1"]')
         await pg.reload(); await pg.click('#tabs button[data-v=run]')

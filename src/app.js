@@ -40,6 +40,7 @@ function blankRally() {
     rows: [], taEvents: [], created: now(), updated: now() };
 }
 const R = () => store.rallies[store.cur] || null;
+const fmtOCF = v => +v > 0 ? (+v).toFixed(4) : String(v ?? '');   // OCF is always shown with four decimals
 
 function save(rally) {
   if (rally) { rally.updated = now(); Cloud.queue(rally.id); }
@@ -200,9 +201,8 @@ function renderRallies() {
 $('btnNew').onclick = () => { const r = blankRally(); store.rallies[r.id] = r; store.cur = r.id; save(r); show('setup'); };
 $('btnNewSample').onclick = () => {
   const r = blankRally();
-  Object.assign(r, { name: 'Desert Loop (sample)', cn: 12, ocf: 1.0200, speedo: SPEEDO_START,
-    crew: { driver: 'Jane Driver', navigator: 'John Navigator', passengers: [] } });
-  r.rows = Core.mergeRows([], SAMPLE_ROWS).rows;
+  Object.assign(r, JSON.parse(JSON.stringify(SAMPLE.rally)));
+  r.rows = Core.mergeRows([], SAMPLE.rows).rows;
   store.rallies[r.id] = r; store.cur = r.id; save(r); show('setup');
 };
 
@@ -217,7 +217,7 @@ function renderSetup() {
       <div><label for="fCN">Car number (CN, minutes added to CZT)</label><input id="fCN" inputmode="numeric" value="${esc(r.cn)}"></div>
     </div>
     <div class="grid2" style="grid-template-columns:minmax(0,1fr) 110px">
-      <div><label for="fOCF">OCF (VM = OM × OCF)</label><input id="fOCF" inputmode="decimal" value="${esc(r.ocf)}"></div>
+      <div><label for="fOCF">OCF (VM = OM × OCF)</label><input id="fOCF" inputmode="decimal" value="${esc(fmtOCF(r.ocf))}"></div>
       <div><label for="fCls">Class</label><select id="fCls"><option value="">—</option>${['A', 'B', 'C', 'D'].map(k => `<option ${r.cls === k ? 'selected' : ''}>${k}</option>`).join('')}</select></div>
     </div>
     <div class="small muted" id="ocfHelp"></div>
@@ -466,7 +466,7 @@ async function readPages(only, model) {
 }
 
 const CHAT_PROMPT = `I'm attaching photos of SCCA RoadRally Route Instruction pages. Transcribe every route instruction (RI) row from all pages into ONE JSON array, in RI order, inside a single \`\`\`json code block, with nothing else after it.
-Each element: {"ri": RI number as printed, "om": the OM column EXACTLY as printed as a string (keep a restart's slash, e.g. "13.27/0.00"), "czt": CZT as printed ("HH:MM:SS" or "HH:MM.cc") or null, "cp": checkpoint number or null, "instr": instruction text exactly as printed, "info": any notes text or "", "note": only if something is illegible or uncertain}.
+Each element: {"ri": RI number as printed, "om": the OM column EXACTLY as printed as a string (keep a restart's slash, e.g. "13.27/0.00", or "/0.00" for the start), "czt": CZT as printed ("HH:MM:SS" or "HH:MM.cc") or null, "cp": checkpoint number or null, "instr": instruction text exactly as printed, "info": any notes text or "", "note": only if something is illegible or uncertain}.
 Include rows with no CZT. Never guess: use null for blank cells.`;
 // Read the pages in an ordinary Claude chat (works where this page cannot open the photo picker).
 function chatRead() {
@@ -714,7 +714,7 @@ function renderData() {
   const tas = (r.taEvents || []).slice().sort((x, y) => Core.cmpRI(x.ri, y.ri));
   $('dataBody').innerHTML = `
   <div class="card"><h2>${esc(r.name || 'Untitled rally')}</h2>
-    <div class="small">${esc(r.date)} · Car ${esc(r.cn)} · Class ${esc(r.cls || '—')} · OCF ${esc(r.ocf)} · Driver ${esc(r.crew.driver || '—')} · Navigator ${esc(r.crew.navigator || '—')}${r.crew.passengers.filter(Boolean).length ? ' · Passengers ' + esc(r.crew.passengers.filter(Boolean).join(', ')) : ''}</div>
+    <div class="small">${esc(r.date)} · Car ${esc(r.cn)} · Class ${esc(r.cls || '—')} · OCF ${esc(fmtOCF(r.ocf))} · Driver ${esc(r.crew.driver || '—')} · Navigator ${esc(r.crew.navigator || '—')}${r.crew.passengers.filter(Boolean).length ? ' · Passengers ' + esc(r.crew.passengers.filter(Boolean).join(', ')) : ''}</div>
     <div class="small muted" style="margin-top:4px">${r.rows.length} Route Instructions · ${done} complete · TAs entered: ${tas.length ? tas.map(t => `RI ${esc(t.ri)} ${fmtTA(t.ta)}`).join(', ') : 'none'}</div>
     <div class="small muted" style="margin-top:4px">Storage: ${lsOK ? 'saved on this device' : 'NOT saved on this device'}${Cloud.col ? `; private copy in your Claude account${Cloud.last ? ' (last saved ' + new Date(Cloud.last).toLocaleTimeString() + ')' : ''}` : ''}.</div>
   </div>
