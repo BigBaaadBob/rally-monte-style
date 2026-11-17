@@ -6,7 +6,7 @@ Moved from the claude.ai "Road Rally" Project. The app was first delivered as a 
 - Reads photos of the Route Instruction pages into a table of Route Instructions, merges by RI, and sorts.
 - User-visible text calls both the source pages and the app's table Route Instructions; RI means only a single Route Instruction; never Route Table, RT, RIs, or route information.
 - Adds VM and TT columns. OM and CZT are hidden on the Run screen.
-- Prep: rally name, date, crew (driver, navigator, and passengers), car number (CN), Class (A, B, C, or D; same line as OCF), OCF, and the close-RI limit. Internet is allowed.
+- Prep: rally name, date, crew (driver, navigator, and passengers), vehicle (free text, optional; Crew and vehicle card; shown only on the set-up form), car number (CN), Class (A, B, C, or D; same line as OCF), OCF, and the close-RI limit. Internet is allowed.
 - Run: shows the first uncompleted RI. Small Undo button and a 58 px Complete button; tap a ✓ to un-complete that row. No internet needed.
 
 ## Computation
@@ -33,7 +33,8 @@ Moved from the claude.ai "Road Rally" Project. The app was first delivered as a 
 - When the page runs inside Claude and is online, a private copy of each rally goes to the artifact db at data/users/<id>/<rallyId>.
 - Account copies arrive as frozen objects and are deep-copied when loaded (fix for the iPad "readonly property" error).
 - localStorage keys `rallyRT.v1` and `rallyRT.apikey` keep their legacy names; renaming either requires a migration.
-- Export: CSV (augmented Route Instructions with class, close limit, and estimate lock status) and JSON (full record, re-importable). There is also an offline HTML copy.
+- Rallies saved without Vehicle (in localStorage, JSON files, or account copies) load with it empty; there is no migration.
+- Export: JSON (full record) is the only round-trip format. CSV is an export-only report (augmented Route Instructions with class, close limit, and estimate lock status); its details block includes a Vehicle line after the crew lines, written even when empty. There is also an offline HTML copy.
 
 ## Getting the Route Instructions in
 - Inside Claude: Add page photos → Read. The artifact `sample` capability reads one page per call.
@@ -42,7 +43,7 @@ Moved from the claude.ai "Road Rally" Project. The app was first delivered as a 
 - Read in a Claude chat… (for the Claude Android app, where the photo picker does nothing in artifacts): copy the instructions, attach the photos in a normal Claude chat, then paste Claude's whole reply into Paste rows. The JSON is extracted from the reply even with surrounding prose and [brackets] in instruction text, and several fenced blocks are combined. Paste rows also accepts CSV.
 - A copied photo can be pasted on the Route tab where the device allows it.
 - Add page photos opens a picker that accepts several images at once, so a whole rally can be added in one go.
-- Paste rows also accepts a CSV exported by the app: it skips the rally details above the `RI,…` header line, reads the RI, OM (a `x.xx/0.00` OM marks a restart), CZT, CP, Instruction, and Info columns by header name, and ignores the computed columns. Completion marks and TA entries are not restored; the JSON export is the full record.
+- Paste rows also accepts a CSV exported by the app: it skips the rally details (including the Vehicle line) above the `RI,…` header line, reads the RI, OM (a `x.xx/0.00` OM marks a restart), CZT, CP, Instruction, and Info columns by header name, and ignores the computed columns. Completion marks and TA entries are not restored; the JSON export is the full record.
 - Paste rows with no rows found shows "No rows found in that text", keeps the dialog open, and leaves the table unchanged.
 
 ## Testing

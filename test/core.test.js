@@ -142,6 +142,19 @@ assert.ok(csv.includes('41,,8.42,8.59,'), 'CSV first row not a restart');
 { const b = Core.parseCSV('RI,OM,CZT,CP,Instruction,Info\n210,1.50,,,"R at [sign]",note\n211,1.70,16:20:00,90,CHECKPOINT,');
   assert.deepStrictEqual(b.map(x => [x.ri, x.om, x.czt, x.cp, x.instr]), [['210', '1.50', null, null, 'R at [sign]'], ['211', '1.70', '16:20:00', '90', 'CHECKPOINT']], 'bare lines with a header'); }
 assert.strictEqual(Core.parseCSV('210,1.50,,,x,y').length, 1, 'bare line without a header');
+// Vehicle (DESIGN Scope and Storage): a CSV details line directly after the crew lines, quoted like any field, written even when empty
+{ const crew = { driver: 'Jane Driver', navigator: 'John Navigator', passengers: ['Pat Example'] };
+  const lines = s => s.split('\n');
+  const vcsv = Core.toCSV({ ...R, crew, vehicle: 'Blue hatchback, "test"' });
+  const L = lines(vcsv), iv = L.findIndex(l => l.startsWith('Vehicle,'));
+  assert.strictEqual(L[iv], 'Vehicle,"Blue hatchback, ""test"""', 'Vehicle value is CSV-quoted');
+  assert.ok(L[iv - 1].startsWith('Passengers,'), 'Vehicle line directly follows the crew lines');
+  assert.ok(iv < L.findIndex(l => l.startsWith('RI,')), 'Vehicle line is above the RI header');
+  for (const v of [undefined, '']) {
+    const e = lines(Core.toCSV({ ...R, crew, vehicle: v }));
+    assert.ok(e.includes('Vehicle,'), 'Vehicle line is present with an empty value'); }
+  const strip = s => lines(s).filter(l => !l.startsWith('Vehicle,')).join('\n');
+  assert.deepStrictEqual(Core.parseCSV(vcsv), Core.parseCSV(strip(vcsv)), 'parseCSV ignores the Vehicle line'); }
 // OCR parse
 assert.strictEqual(Core.parseOCR('```json\n[{"ri":1}]\n```').length, 1);
 assert.strictEqual(Core.parseOCR('Here: {"rows":[{"ri":1},{"ri":2}]}').length, 2);

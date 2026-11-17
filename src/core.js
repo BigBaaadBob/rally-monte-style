@@ -226,7 +226,7 @@
     const crew = rally.crew || {};
     const head = [
       ['Rally', rally.name], ['Date', rally.date], ['Driver', crew.driver], ['Navigator', crew.navigator],
-      ['Passengers', (crew.passengers || []).join('; ')], ['Car number', rally.cn], ['Class', rally.cls], ['OCF', rally.ocf],
+      ['Passengers', (crew.passengers || []).join('; ')], ['Vehicle', rally.vehicle], ['Car number', rally.cn], ['Class', rally.cls], ['OCF', rally.ocf],
       ['Close RI limit (mi)', closeMi(rally)],
       ['Speedometer (est.)', rally.speedo],
     ].map(r => r.map(csvEsc).join(','));
