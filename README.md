@@ -61,16 +61,7 @@ Everything (build, unit tests, every browser test):
 .venv/bin/python test/run_all.py         # Linux or WSL
 ```
 
-Individually (shown for Windows; use `.venv/bin/python` on Linux or WSL):
-
-```sh
-.venv/Scripts/python build.py
-node test/core.test.js
-.venv/Scripts/python test/e2e/pwa.py     # offline cache, update prompt, API reading
-.venv/Scripts/python test/e2e/e2e6.py    # Run screen
-```
-
-Screenshots go to `test/e2e/out/`.
+Test details: see `CLAUDE.md` § Testing.
 
 ## License
 

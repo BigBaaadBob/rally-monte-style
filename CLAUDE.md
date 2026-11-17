@@ -6,39 +6,52 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Rally: Monte Style is a single-page, offline-capable PWA for SCCA Monte Carlo–style (TDS) road rallies. It reads photos of Route Instruction pages into a table of Route Instructions. The pages are read by Claude. The app is written in plain JavaScript, with no framework, no npm dependencies and no bundler. It then computes VM (vehicle miles) and TT (target time), and estimates TT for rows that have no CZT. `docs/DESIGN.md` is the authoritative spec for behavior. Read it before changing any computation or Run-screen behavior.
 
-## Python
+## Build
+
+Commands use the Windows venv path; on Linux/WSL use `.venv/bin/python`.
+
+```sh
+.venv/Scripts/python build.py              # build dist/ (required before any e2e test)
+```
+
+- There is no lint step and no package.json.
+- `tools/make_icons.py` (needs Pillow) regenerates `web/icons/*.png`. The PNGs are committed, so it rarely needs to run.
+
+## Testing
 
 Python: use the project environment (Python 3.14); never the global python.
 
 - Windows: `py -V:3.14 -m venv .venv`, then `.venv/Scripts/python -m pip install -r requirements-dev.txt` and `.venv/Scripts/python -m playwright install chromium`.
 - Linux or WSL: `python3.14 -m venv .venv`, then `.venv/bin/python -m pip install -r requirements-dev.txt` and `.venv/bin/python -m playwright install --with-deps chromium`.
 
-Run all tests with `.venv/Scripts/python test/run_all.py` (Windows) or `.venv/bin/python test/run_all.py` (Linux/WSL). `run_all.py` and every e2e script exit 1 with a version message on any other Python.
-
-## Commands
-
-Commands below use the Windows venv path; on Linux/WSL use `.venv/bin/python`.
+Commands below use the Windows venv path; on Linux/WSL use `.venv/bin/python`. `run_all.py` and every e2e script exit 1 with a version message on any other Python.
 
 ```sh
-.venv/Scripts/python build.py              # build dist/ (required before any e2e test)
 node test/core.test.js                     # unit tests for src/core.js (this is all CI runs)
 .venv/Scripts/python test/e2e/e2e6.py      # one browser test (Playwright); needs dist/ built
-.venv/Scripts/python test/e2e/pwa.py       # offline cache, update prompt, API-key reading (serves dist/ on 127.0.0.1:8765)
+.venv/Scripts/python test/e2e/pwa.py       # serves dist/ on 127.0.0.1:8765
 .venv/Scripts/python test/run_all.py       # build + unit tests + every e2e script; stops at first failure
 ```
 
-- There is no lint step and no package.json.
 - The unit tests are a single assert script. To run a subset, comment out sections or run snippets with `node -e "const Core=require('./src/core.js'); ..."`.
 - Each e2e script exits 1 when a check fails or an unexpected page error is captured, so `run_all.py` stops at the first real failure. In `test/e2e/_common.py`: `check(cond, msg)` records a pass or fail and never raises; `capture_errors(page, allow=())` records `pageerror` and console-error messages for a page (call it for every page); `run(main)` replaces `asyncio.run`, counts unallowlisted errors as failures, prints `<script>: N checks, M failed`, and sets the exit code. Setup failures (server, navigation, selector timeout) raise. Take expected values from `docs/DESIGN.md` rules or compute them in the page with `Core`, never from current output, and avoid sample-specific RI numbers.
 - `ALLOW` in `_common.py` is a list of `(kind, regex, reason)` entries (`kind` is `pageerror` or `console`) for known, harmless messages. It starts empty. Add an entry only for a message seen in a real run, with a reason; a `pageerror` entry also needs a justification in the PR. Screenshots and a few informational prints remain prints. Screenshots go to `test/e2e/out/` (gitignored).
 - `test/e2e/_common.py` is shared by the e2e scripts; `test/e2e/page.png` is a committed fixture image that they upload.
-- `tools/make_icons.py` (needs Pillow) regenerates `web/icons/*.png`. The PNGs are committed, so it rarely needs to run.
+- Which e2e script covers which change (each needs `dist/` built):
+  - `e2e5.py`: Run screen Time Allowance dialog and layouts.
+  - `e2e6.py`: Run screen scroll position and layouts. Use it for any Run-screen change.
+  - `e2e7.py`: Route screen paste and CSV import, offline copy, and Read without an API key.
+  - `pwa.py`: offline cache, update prompt, and API-key reading (Anthropic API mocked). Use it for anything touching install, offline, or API reading.
+  - `mock.py`: the claude.ai runtime (see below).
+- `mock.py` mocks the claude.ai runtime: the `db` capability returns frozen snapshot data, as the real one does, and the `sample` capability returns canned rows. `add_init_script` installs it with `window.__REMOTE__` (the account copies) before the app loads. It runs like the other scripts and covers the account-copy and photo-merge path.
+- The offline-copy CSP check is in `e2e7.py`. An init script (`INJECT`) adds a `<meta http-equiv="Content-Security-Policy" id="fakecsp">` and a script that sets `window.__injected` to the live page's head. The test first checks that both are present in the live page, then reads `SELF_HTML` (the offline copy's source) and asserts it contains neither `fakecsp` nor `__injected`, and that the count of `<script data-rt` in the copy equals the live page's `script[data-rt]` count (the app's own scripts are kept).
+- CI (`.github/workflows/pages.yml`) runs only `python3 build.py` and `node test/core.test.js`. It does not run the e2e tests.
 
 ## Rules for every change
 
 - When behavior changes, update `docs/DESIGN.md` in the same change.
 - Every change to `src/core.js` computation gets a unit test in `test/core.test.js`.
-- Before finishing a change: `.venv/Scripts/python test/run_all.py` (`.venv/bin/python` on Linux/WSL), or at least build + `node test/core.test.js` plus the relevant e2e script (`pwa.py` for anything touching install, offline, or API reading; `e2e6.py` for the Run screen).
+- Before finishing a change, run the tests: all of them via `run_all.py`, or at least the unit tests plus the relevant e2e script. See `## Testing` for which script covers what.
 - Never commit API keys. The Anthropic key lives only in each device's localStorage.
 
 ## Workflow
@@ -79,12 +92,12 @@ Source files must never contain `</script` (the build asserts this). Edit `src/`
 
 **Two runtime hosts, one file.** The same `dist/index.html` runs:
 1. **Standalone (GitHub Pages, installable PWA).** Pages are read by calling `https://api.anthropic.com/v1/messages` directly from the browser, using the user's own API key (localStorage `rallyRT.apikey`, never exported). The model picker lists Sonnet 5.5 (default), Haiku 5.5 and Opus 5.5. `web/sw.js` serves the app's own origin cache-first and never intercepts cross-origin requests. A new version waits and is applied only when the user taps Reload (`skipWaiting` message). The app must never reload by itself.
-2. **As a claude.ai artifact.** The app detects `window.claude.use`. It then uses the `sample` capability to read pages and the `db` capability for account copies (`data/users/<id>/<rallyId>`). The service worker is not registered in this mode. Account copies arrive deeply frozen and must be deep-copied before mutation. `test/e2e/mock.py` mocks this runtime.
+2. **As a claude.ai artifact.** The app detects `window.claude.use`. It then uses the `sample` capability to read pages and the `db` capability for account copies (`data/users/<id>/<rallyId>`). The service worker is not registered in this mode. Account copies arrive deeply frozen and must be deep-copied before mutation. To test it, see `## Testing`.
 
 **Storage.** The whole app state is in localStorage under `rallyRT.v1` (`{rallies, cur, prefs}`) and is saved after every change. Export formats are CSV, re-importable JSON, and an offline HTML copy. The offline copy strips CSP meta tags and scripts injected by the host.
 
-**UI constraints from DESIGN.md.** The Run screen must keep the user's scroll position through every change. It scrolls only when Complete is pressed. Layouts are tested at 390 and 360 px portrait and 844 px landscape.
+**UI constraints from DESIGN.md.** The Run screen must keep the user's scroll position through every change. It scrolls only when Complete is pressed. Test layouts: see `docs/DESIGN.md` § Testing.
 
 ## CI / deploy
 
-`.github/workflows/pages.yml` runs on every push to `main`. It runs `python3 build.py` and `node test/core.test.js`, and deploys `dist/` to GitHub Pages only if both pass. CI does not run the e2e tests, so run them locally when you change the UI, the service worker or the API-reading path.
+`.github/workflows/pages.yml` runs on every push to `main` and deploys `dist/` to GitHub Pages only if its build and tests pass. What CI runs: see `## Testing`.
