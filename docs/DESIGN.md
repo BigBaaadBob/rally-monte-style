@@ -46,10 +46,13 @@ Moved from the claude.ai "Road Rally" Project. The app was first delivered as a 
 - Paste rows with no rows found shows "No rows found in that text", keeps the dialog open, and leaves the table unchanged.
 
 ## Testing
-- Node unit tests for the core; Playwright runs at 390/360 px portrait and 844 px landscape.
-- A mock of the Claude runtime (frozen db snapshots plus a sample reader) covers the account-copy and photo-merge path; a simulated injected CSP checks the offline copy.
+- The core is pure (no DOM, no clock) and is unit-tested under Node.
+- Playwright runs at 390 and 360 px portrait and 844 px landscape. These are the supported layouts.
+- A mock of the Claude runtime (frozen db snapshots plus a sample reader) covers the account-copy and photo-merge path.
+- The tests use the built-in invented sample rally, "Desert Loop" (`src/sample.js`).
+- The offline copy's stripping of security-policy meta tags and injected scripts is verified against a simulated injected CSP.
 
-## Hosting and install (v8)
+## Hosting and install
 - App name: `Rally: Monte Style` (manifest `name` and page title); `short_name`: `Monte Style`.
 - Hosted on GitHub Pages at https://bigbaaadbob.github.io/rally-monte-style/. Every push to `main` builds, runs the unit tests, and publishes only if they pass (`.github/workflows/pages.yml`).
 - Installable web app: `manifest.webmanifest` (standalone display, icons) and `sw.js`.
@@ -59,7 +62,7 @@ Moved from the claude.ai "Road Rally" Project. The app was first delivered as a 
 - The Rallies tab shows install steps when the app is opened in a browser rather than installed: the Android Install button when Chrome offers one, and Share → Add to Home Screen on iPhone/iPad, with a note that the installed app's storage is separate from Safari's.
 - The same `dist/index.html` still works as a claude.ai artifact (no offline cache there; Claude's own reader is used).
 
-## Reading pages (v8)
+## Reading pages
 - Outside claude.ai, pages are read with the user's Anthropic API key, entered on the Route tab and stored only in that device's local storage. It is never exported or committed. The Data tab can remove it. Only a key that starts with `sk-ant-` is saved; any other entry is rejected with a message and nothing is stored.
 - Model picker (saved per device): Sonnet 5.5 (default, about 2¢/page), Haiku 5.5 (about 0.1¢/page), Opus 5.5 (about 7¢/page). Estimates use Nov 2026 list prices and an image of about 3,900 tokens at 2,000 px.
 - Each page thumbnail shows which model read it, and offers "Re-read: Opus" for a page that needs a second look. Re-reading merges by RI, replacing that page's rows.
