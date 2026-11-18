@@ -59,7 +59,7 @@ node test/core.test.js                     # unit tests for src/core.js (this is
 Three project skills in `.claude/skills/` drive the issue-to-merge loop. Each runs only when typed, never automatically.
 
 - `/start-issue <n>`: requires a clean tree, syncs `main`, creates `fix/`, `docs/`, or `feat/` `<n>-<slug>` from the issue's labels, reads the issue and its "Brief for #n" comment, then proposes a plan. No files are edited until the plan is approved.
-- `/ship`: confirms `docs/DESIGN.md` changed (or that no design update is needed), runs `test/run_all.py`, scans the staged diff for secrets and personal information, commits design and code separately, asks before pushing, then opens a PR ending in `Closes #n`. It never merges.
+- `/ship`: confirms `docs/DESIGN.md` changed (or that no design update is needed), runs `test/run_all.py`, scans the staged diff for secrets and personal information, commits design and code separately, asks before pushing, then opens a PR ending in `Closes #n`. CI runs only on `main` after the merge, so the PR has no checks; the local `run_all.py` run is the pre-merge gate. It never merges.
 - `/finish`: after the merge, returns to `main`, pulls, deletes the merged local and remote branch (asking before a force delete or a remote delete), and confirms the issue closed.
 
 Merging is done by the owner on GitHub after review.
