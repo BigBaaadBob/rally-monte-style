@@ -365,9 +365,9 @@ function renderRoute() {
     if (k === 'restart') row.restart = el.checked;
     else if (k === 'om') { const v = el.value.trim(); if (/\//.test(v)) { const n = Core.normRow({ om: v }); row.om = n.om; row.restart = true; } else row.om = v === '' || isNaN(+v) ? null : +v; }
     else if (k === 'czt') { const v = el.value.trim(); const t = Core.parseTOD(v); if (v && t == null) { toast('CZT format: HH:MM:SS or HH:MM.cc'); renderRoute(); return; } row.czt = t; }
-    else if (k === 'ri') { const v = el.value.trim(); if (!v) { toast('RI cannot be blank'); renderRoute(); return; }
-      if (r.rows.some((o, j) => j !== i && Core.sameRI(o.ri, v))) { toast(`RI ${v} already exists`); renderRoute(); return; }
-      row.ri = /^\d+$/.test(v) ? +v : v; }
+    else if (k === 'ri') { const res = Core.renameRI(r, i, el.value);
+      if (!res.ok) { toast(res.reason); renderRoute(); return; }
+      row.ri = res.ri; r.taEvents = res.taEvents; }
     else if (k === 'cp') row.cp = el.value.trim() || null;
     else row[k] = el.value;
     newSet.delete(String(row.ri));

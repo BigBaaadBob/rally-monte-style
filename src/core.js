@@ -184,6 +184,16 @@
     return ev;
   }
 
+  // Rename the RI of row idx. Rejects a blank or duplicate RI (taEvents unchanged);
+  // otherwise moves the row's TA events to the new RI. Does not mutate the rally.
+  function renameRI(rally, idx, text) {
+    const v = String(text ?? '').trim(), events = rally.taEvents || [];
+    if (!v) return { ok: false, reason: 'RI cannot be blank', taEvents: events };
+    if (rally.rows.some((o, j) => j !== idx && sameRI(o.ri, v))) return { ok: false, reason: `RI ${v} already exists`, taEvents: events };
+    const old = rally.rows[idx].ri, ri = /^\d+$/.test(v) ? +v : v;
+    return { ok: true, ri, taEvents: events.map(e => sameRI(e.ri, old) ? { ...e, ri } : e) };
+  }
+
   // Lock / unlock a row's estimated TT. Returns new rows array (unchanged if nothing to lock).
   function lockEst(rally, idx, by) {
     const c = compute(rally)[idx];
@@ -290,6 +300,6 @@
   }
 
   const Core = { parseTOD, fmtTOD, parseRel, fmtRel, cmpRI, sameRI, normRow, mergeRows, compute, activeIndex, legOf,
-    setTA, lockEst, unlockEst, completeActive, CLOSE_MI, closeMi, uncomplete, lastCompleted, toCSV, parseCSV, parseOCR };
+    setTA, renameRI, lockEst, unlockEst, completeActive, CLOSE_MI, closeMi, uncomplete, lastCompleted, toCSV, parseCSV, parseOCR };
   if (typeof module !== 'undefined' && module.exports) module.exports = Core; else root.Core = Core;
 })(typeof window !== 'undefined' ? window : globalThis);
