@@ -505,12 +505,17 @@ function pasteRows() {
 }
 // ---------------------------------------------------------------- RUN (operation)
 // The Run list keeps whatever position the user scrolled to across re-renders.
-const runPos = { list: 0, top: 0 };
+// Per rally, in memory only. runDomId is the rally whose list is currently in the DOM.
+const runPos = {};
+let runDomId = null;
 function renderRun() {
   const r = R(), v = $('v-run');
   const oldW = $('runWrap'), oldT = v.querySelector('.runtop');
-  if (oldW) runPos.list = oldW.scrollTop;
-  if (oldT) runPos.top = oldT.scrollTop;
+  if (runDomId && runPos[runDomId]) {
+    if (oldW && runDomId === r.id) runPos[r.id].list = oldW.scrollTop;
+    if (oldT && runDomId === r.id) runPos[r.id].top = oldT.scrollTop;
+  }
+  runDomId = r.id;
   if (!r.rows.length) { v.innerHTML = '<div class="narrow"><p class="muted">No Route Instructions yet.</p><button class="primary" id="goR">Build it on Route</button></div>'; $('goR').onclick = () => show('route'); return; }
   const C = Core.compute(r), a = Core.activeIndex(r), done = r.rows.filter(x => x.done).length;
   let card;
@@ -563,8 +568,11 @@ function renderRun() {
   }).join('')}</tbody></table></div>`;
 
   const w = $('runWrap'), t = v.querySelector('.runtop');
-  if (w) { w.scrollTop = runPos.list; w.addEventListener('scroll', () => { runPos.list = w.scrollTop; }, { passive: true }); }
-  if (t) { t.scrollTop = runPos.top; t.addEventListener('scroll', () => { runPos.top = t.scrollTop; }, { passive: true }); }
+  const first = !runPos[r.id];                       // first time this rally's list is shown this session
+  const pos = runPos[r.id] || (runPos[r.id] = { list: 0, top: 0 });
+  if (w) { w.scrollTop = pos.list; w.addEventListener('scroll', () => { pos.list = w.scrollTop; }, { passive: true }); }
+  if (t) { t.scrollTop = pos.top; t.addEventListener('scroll', () => { pos.top = t.scrollTop; }, { passive: true }); }
+  if (first && a >= 0) scrollActive('auto');         // same placement as Complete
   if ($('btnDone')) $('btnDone').onclick = () => {
     r.rows = Core.completeActive(r, now()); save(r); renderRun(); scrollActive();   // the one programmatic scroll
   };
@@ -684,7 +692,7 @@ function scrollActive(behavior = 'smooth') {
     const head = w.querySelector('thead').offsetHeight;
     const prev = tr.previousElementSibling;
     const top = Math.max(0, (prev ? prev.offsetTop : tr.offsetTop) - head);
-    runPos.list = top;
+    const cur = R(); if (cur && runPos[cur.id]) runPos[cur.id].list = top;
     try { w.scrollTo({ top, behavior }); } catch (e) { w.scrollTop = top; }
   });
 }
@@ -768,7 +776,7 @@ function renderData() {
     store.rallies[nr.id] = nr; store.cur = nr.id; save(nr); toast('Duplicated'); renderAll();
   };
   $('bDel').onclick = () => confirmBox('Delete rally', `Delete “${esc(r.name || 'Untitled rally')}” and its Route Instructions from this device${Cloud.col ? ' and your account' : ''}? Export it first if you want a record.`, 'Delete', () => {
-    delete store.rallies[r.id]; store.cur = null; Cloud.queue(r.id); save(); show('rallies');
+    delete store.rallies[r.id]; delete runPos[r.id]; store.cur = null; Cloud.queue(r.id); save(); show('rallies');
   });
 }
 
