@@ -117,5 +117,39 @@ async def main():
             await pg.click('#btnDone')
         check(not bad, f'NEXT IN on the active card matches Core.compute for every row ({bad[:3]})')
         check(seen > 0, 'at least one active row has a gap within the close limit (so the NEXT IN check is not vacuous)')
+
+        # DESIGN § Run controls (Scrolling): each rally keeps its own scroll position, in memory only; a rally's Run tab
+        # places its active RI near the top (one row above) the first time it is shown in a session; no active RI -> top.
+        goto_run = lambda rid: pg.evaluate("id => { store.cur = id; show('run'); }", rid)
+        idA = await pg.evaluate('R().id')                      # all RIs complete after the sweep above
+        await pg.reload(); await pg.click('#tabs button[data-v=run]'); await pg.wait_for_timeout(300)
+        check(await pg.evaluate('Core.activeIndex(R())') < 0, 'rally A has no active RI')
+        check(await sc() == 0, 'first visit to a rally with no active RI starts at the top')
+        await pg.click('#tabs button[data-v=rallies]'); await pg.click('#btnNewSample')
+        idB = await pg.evaluate('R().id'); check(idB != idA, 'a second rally was created from the sample')
+        await pg.click('#tabs button[data-v=run]'); await pg.wait_for_timeout(300)
+        # complete rows through the first restart (by property), so the active RI is not the first row
+        for _ in range(80):
+            if await pg.evaluate("(() => { const a = Core.activeIndex(R()); return a > 0 && Core.compute(R())[a].restart; })()"): break
+            await pg.click('#btnDone')
+        await pg.wait_for_timeout(600)
+        check(await pg.evaluate("Core.activeIndex(R()) > 0"), 'rally B has its active RI past the first row')
+        await pg.reload(); await pg.click('#tabs button[data-v=run]'); await pg.wait_for_timeout(300)
+        pos = await pg.evaluate(ACTIVE_POS)
+        want_ri = await pg.evaluate("String(R().rows[Core.activeIndex(R())].ri)")
+        check(pos['ri'].startswith(want_ri) and pos['scroll'] > 0, f'first visit after a reload shows the active RI ({pos})')
+        check(near_top(pos), f'first visit places the active RI near the top with one row above ({pos})')
+        await pg.evaluate("document.getElementById('runWrap').scrollTop = 250"); await pg.wait_for_timeout(100)
+        offB = await sc()
+        await pg.click('#tabs button[data-v=rallies]')
+        await goto_run(idA); await pg.wait_for_timeout(300)
+        check(await sc() == 0, f'rally A does not inherit rally B\'s offset ({offB}); got {await sc()}')
+        await pg.evaluate("document.getElementById('runWrap').scrollTop = 120"); await pg.wait_for_timeout(100)
+        offA = await sc()
+        check(offA != offB, f'the two rallies now have different offsets ({offA}, {offB})')
+        await goto_run(idB); await pg.wait_for_timeout(300)
+        check(await sc() == offB, f'rally B restores its offset on return ({offB}); got {await sc()}')
+        await goto_run(idA); await pg.wait_for_timeout(300)
+        check(await sc() == offA, f'rally A restores its offset on return ({offA}); got {await sc()}')
         await b.close()
 run(main)

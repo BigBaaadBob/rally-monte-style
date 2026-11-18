@@ -52,7 +52,7 @@ Moved from the claude.ai "Road Rally" Project. The app was first delivered as a 
 - TA dialog: a big entry field, ±5, ±15, and ±60 s buttons, and Zero. Changes are pending until Set; Cancel or tapping outside leaves TA unchanged. Limit ±90:00; an invalid entry keeps the dialog open.
 - Direct entry: tapping a field selects its value. Enter or Set commits; for the speedometer, tapping away or Esc leaves the value unchanged.
 - Full screen (⛶ in the header): asks the browser for full screen where allowed, and always hides the app's header and tabs. A small ✕ (top right) exits.
-- Scrolling: the list keeps the user's scroll position through every change. The app scrolls only when Complete is pressed, placing the new active RI near the top with one row above it.
+- Scrolling: the list keeps the user's scroll position through every change. The app scrolls only when Complete is pressed, or when a rally's Run tab is first shown in a session; both place the active RI near the top with one row above it. A rally with no active RI (no Route Instructions, or all complete) starts at the top on its first visit. Each rally keeps its own scroll position, in memory only.
 - Undo is disabled when nothing is complete. Un-completing shows "RI n marked not complete".
 - When every RI is complete, the active card reads "All n Route Instructions complete" with Undo last complete. With no Route Instructions, the Run tab shows "No Route Instructions yet." and a Build it on Route button.
 - Run layout: in landscape at 640 px or wider, the Run list uses two columns and shows the CP column; otherwise it uses one column and no CP column.
