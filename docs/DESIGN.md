@@ -39,6 +39,7 @@ Moved from the claude.ai "Road Rally" Project. The app was first delivered as a 
 - A row with no OM (for example the finish RI) shows no VM and no estimate, and shows a TT only if it has a CZT. It is skipped when checking close rows and can be completed like any other row.
 - TT = CZT + CN minutes + TA.
 - TA (confirmed by the owner): a TA entered on a row applies from that row through the row before the next restart. Rows before it keep their TT, and a restart starts at TA 0. A later TA in the same leg replaces the earlier one from its own row on. The app stores TA as events {ri, ta, at}.
+- Renaming an RI moves its TA events to the new RI. Deleting a row removes its TA events; Clear Route Instructions removes all TA events and completion marks.
 - Estimator (confirmed by the owner): estimated TT = TT of the nearest earlier row in the same leg that has both a TT and a VM + ΔVM ÷ speedometer mph. A row with a TT but no VM is skipped. A negative ΔVM counts as 0. ΔVM and the speedometer are both in vehicle units, so the OCF is accounted for.
 - Estimates are always shown (≈, italic) in the TT column of every row without a CZT, wherever an earlier TT exists in the leg. Nothing to tap.
 - Locking: an estimate is locked only when its RI is completed; it then ignores later speedometer and TA changes. Un-completing releases it. No lock symbol.
