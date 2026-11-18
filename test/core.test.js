@@ -242,4 +242,25 @@ assert.strictEqual(Core.parseOCR('Row 3 reads [curve-left sign]. Here it is:\n[{
 assert.strictEqual(Core.parseOCR('Page 1:\n```json\n[{"ri":1}]\n```\nPage 2:\n```json\n[{"ri":2},{"ri":3}]\n```').length, 3);
 assert.strictEqual(Core.parseOCR('[]').length, 0);
 
+// renameRI moves the row's TA events; rejected renames leave them alone
+{ const Rr = base(), C0 = Core.compute(Rr);
+  const k = Rr.rows.findIndex((x, i) => !C0[i].restart && Rr.rows.slice(i + 1).some((y, j) => y.czt != null && !C0[i + 1 + j].restart));
+  assert.ok(k >= 0, 'sample has a non-restart row followed by a CZT row');
+  const old = Rr.rows[k].ri;
+  Rr.taEvents = Core.setTA(Rr, k, 30, 7);
+  const other = Core.setTA({ rows: Rr.rows, taEvents: Rr.taEvents }, 0, 5, 8);
+  const nr = old + 'x', res = Core.renameRI(Rr, k, ' ' + nr + ' ');
+  assert.ok(res.ok); assert.strictEqual(res.ri, nr);
+  assert.deepStrictEqual(res.taEvents, [{ ri: nr, ta: 30, at: 7 }], 'event moved, ta and at kept');
+  assert.deepStrictEqual(Rr.taEvents, [{ ri: old, ta: 30, at: 7 }], 'input not mutated');
+  const Rn = { ...Rr, rows: Rr.rows.map((x, i) => i === k ? { ...x, ri: res.ri } : x), taEvents: res.taEvents };
+  const Rd = { ...Rn, taEvents: [{ ri: nr, ta: 30, at: null }] };
+  assert.deepStrictEqual(Core.compute(Rn).map(c => c.tt), Core.compute(Rd).map(c => c.tt), 'TTs match a TA set directly on the renamed row');
+  assert.strictEqual(Core.compute(Rn)[k].ta, 30);
+  assert.strictEqual(Core.renameRI({ ...Rr, taEvents: other }, k, nr).taEvents.filter(e => e.ri === 0 || e.ri === Rr.rows[0].ri).length, 1, 'other rows events untouched');
+  const blank = Core.renameRI(Rr, k, '  '); assert.ok(!blank.ok); assert.strictEqual(blank.taEvents, Rr.taEvents);
+  const dup = Core.renameRI(Rr, k, String(Rr.rows[k + 1].ri)); assert.ok(!dup.ok); assert.strictEqual(dup.taEvents, Rr.taEvents);
+  const num = Core.renameRI({ rows: [{ ri: 'a1' }, { ri: 9 }], taEvents: [{ ri: 'a1', ta: 1, at: 0 }] }, 0, '5');
+  assert.strictEqual(num.ri, 5); assert.strictEqual(num.taEvents[0].ri, 5); }
+
 console.log('core tests: all passed');
