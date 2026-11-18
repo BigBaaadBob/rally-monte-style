@@ -87,9 +87,9 @@ Source files must never contain `</script` (the build asserts this). Edit `src/`
 - `src/app.js` is the whole UI: tabs (Rallies, Route, Run, Data), modals, and storage. `R()` returns the current rally.
 
 **Computation rules that are easy to break** (see DESIGN.md "Computation"):
-- The first row starts leg 1 (it need not be a restart; there is no `leg: null`). Each later restart (OM printed `x.xx/0.00`) starts a new leg at VM 0 and TA 0. A bare `/0.00` is a restart at OM 0.00. A row with no OM has no VM, TT, or estimate and is never close.
+- The first row starts leg 1 (it need not be a restart; there is no `leg: null`). Each later restart (OM printed `x.xx/0.00`) starts a new leg at VM 0 and TA 0. A bare `/0.00` is a restart at OM 0.00. A row with no OM has no VM or estimate, shows a TT only if it has a CZT, and is never close.
 - TA is stored as events `{ri, ta, at}`. Each event applies from its row through the end of the leg, and a later event in the same leg overrides it.
-- Estimated TT = TT of the nearest earlier row with a TT in the same leg + ΔVM ÷ speedometer mph. An estimate locks only when its row is completed.
+- Estimated TT = TT of the nearest earlier row in the same leg with both a TT and a VM + ΔVM ÷ speedometer mph. An estimate locks only when its row is completed.
 - No system clock or sensor value feeds any computation. Timestamps are only logged.
 
 **Two runtime hosts, one file.** The same `dist/index.html` runs:
