@@ -9,12 +9,24 @@ assert.strictEqual(Core.fmtTOD(T('15:39:00'), 'hms'), '15:39:00');
 assert.strictEqual(Core.fmtTOD(T('15:39:30'), 'hmc'), '15:39.50');
 assert.strictEqual(T('15:39.5'), T('15:39:30'));
 assert.strictEqual(Core.fmtTOD(T('15:59:59.8'), 'hms'), '16:00:00');
-assert.strictEqual(Core.parseRel('+1:05'), 65);
-assert.strictEqual(Core.parseRel('-12'), -12);
-assert.strictEqual(Core.parseRel('.50m'), 30);
-assert.strictEqual(Core.parseRel(''), 0);
-assert.strictEqual(Core.parseRel('abc'), null);
-assert.strictEqual(Core.fmtRel(-65), '-1:05');
+// Time Allowance (TA): whole seconds or m:ss, never negative (DESIGN Run controls)
+assert.strictEqual(Core.parseTA('1:05'), 65);
+assert.strictEqual(Core.parseTA('+1:05'), 65);
+assert.strictEqual(Core.parseTA('2:00'), 120);
+assert.strictEqual(Core.parseTA('12'), 12);
+assert.strictEqual(Core.parseTA('+12'), 12);
+assert.strictEqual(Core.parseTA(''), 0);
+assert.strictEqual(Core.parseTA('   '), 0);
+assert.strictEqual(Core.parseTA('0:59'), 59);
+for (const bad of ['-12', '−0:30', '-1:05', '.50m', '1.5', '0:60', '1:5', '1:05.5', 'abc', '1m']) assert.strictEqual(Core.parseTA(bad), null, bad);
+assert.strictEqual(Core.fmtTA(0), '0:00');
+assert.strictEqual(Core.fmtTA(65), '1:05');
+assert.strictEqual(Core.fmtTA(5400), '90:00');
+assert.strictEqual(Core.fmtTA(null), '');
+{ const rr = { rows: [{ ri: 1 }], taEvents: [] };
+  assert.strictEqual(Core.setTA(rr, 0, -15)[0].ta, 0, 'TA is never negative');
+  assert.strictEqual(Core.setTA(rr, 0, 9999)[0].ta, Core.TA_MAX, 'TA is capped at 90:00');
+  assert.strictEqual(Core.setTA(rr, 0, 30.6)[0].ta, 31, 'TA is whole seconds'); }
 
 
 // normalise "/0.00" (DESIGN Computation: a bare "/0.00" is a restart at OM 0.00)
@@ -122,9 +134,9 @@ assert.strictEqual(C[k2].ta, 0, 'a restart starts at TA 0');
 // re-entering TA at the same row replaces it; a later TA replaces from its row on
 R.taEvents = Core.setTA(R, kta, 20, 11);
 assert.strictEqual(R.taEvents.length, 1);
-R.taEvents = Core.setTA(R, kta + 2, -15, 12);
+R.taEvents = Core.setTA(R, kta + 2, 15, 12);
 C = agree(R, 'TA2');
-assert.strictEqual(C[kta + 1].ta, 20); assert.strictEqual(C[kta + 2].ta, -15); assert.strictEqual(C[lastOfLeg0].ta, -15);
+assert.strictEqual(C[kta + 1].ta, 20); assert.strictEqual(C[kta + 2].ta, 15); assert.strictEqual(C[lastOfLeg0].ta, 15);
 // an estimate follows the TA
 { const Rt = base(); Rt.taEvents = Core.setTA(Rt, k2, 30);
   const Ct = agree(Rt, 'TA on a restart'), b = Core.compute(base()), e = Ct.findIndex((c, i) => i > k2 && c.estAnchor === Rt.rows[k2].ri);

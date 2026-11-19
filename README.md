@@ -3,7 +3,7 @@
 Rally: Monte Style is an installable web app for SCCA Monte Carlo–style (TDS) RoadRallies. It reads photos of the Route Instruction pages into a table of Route Instructions, then adds:
 
 - **VM** (vehicle miles = OM × OCF)
-- **TT** (target time = CZT + car number in minutes + time allowance (TA))
+- **TT** (target time = CZT + car number in minutes + Time Allowance (TA))
 
 It also estimates TT for rows that have no CZT, from your speedometer setting. During the rally it runs offline on a phone or tablet.
 

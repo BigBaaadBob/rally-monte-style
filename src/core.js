@@ -30,26 +30,22 @@
     const h = Math.floor(s / 3600) % 24; s %= 3600;
     return `${p2(h)}:${p2(Math.floor(s / 60))}:${p2(s % 60)}`;
   }
-  // Relative time (TA): "30", "-12", "+1:05", "-0:45", ".50m" / "1.25m" (minutes, decimal)
-  function parseRel(s) {
+  // Time Allowance (TA), whole seconds, never negative: "90" or "1:05" (m:ss, seconds 0-59), optional "+".
+  // Returns null for anything else (negative, decimal, seconds >= 60); a blank entry is 0.
+  function parseTA(s) {
     if (s == null) return null;
     s = String(s).trim().replace(/\s+/g, '');
     if (!s) return 0;
-    let m = s.match(/^([+-]?)(\d*\.?\d+)m$/i);
-    if (m) return (m[1] === '-' ? -1 : 1) * Math.round(parseFloat(m[2]) * 60 * 100) / 100;
-    m = s.match(/^([+-]?)(\d+):(\d{2})$/);
-    if (m) return (m[1] === '-' ? -1 : 1) * (+m[2] * 60 + +m[3]);
-    m = s.match(/^([+-]?)(\d+(?:\.\d+)?)s?$/);
-    if (m) return (m[1] === '-' ? -1 : 1) * parseFloat(m[2]);
-    return null;
+    let m = s.match(/^\+?(\d+):(\d{2})$/);
+    if (m) return +m[2] < 60 ? +m[1] * 60 + +m[2] : null;
+    m = s.match(/^\+?(\d+)$/);
+    return m ? +m[1] : null;
   }
-  function fmtRel(sec, mode) {
+  const TA_MAX = 90 * 60;
+  function fmtTA(sec) {
     if (sec == null || !isFinite(sec)) return '';
-    const sg = sec < 0 ? '-' : sec > 0 ? '+' : '';
-    const a = Math.abs(sec);
-    if (mode === 'hmc') return `${sg}${(a / 60).toFixed(2)}m`;
-    const r = Math.round(a);
-    return `${sg}${Math.floor(r / 60)}:${p2(r % 60)}`;
+    const r = Math.round(Math.abs(sec));
+    return `${Math.floor(r / 60)}:${p2(r % 60)}`;
   }
 
   // ---------- RI ordering ----------
@@ -180,7 +176,7 @@
   function setTA(rally, idx, sec, now) {
     const ri = rally.rows[idx].ri;
     const ev = (rally.taEvents || []).filter(e => !sameRI(e.ri, ri));
-    ev.push({ ri, ta: sec, at: now ?? null });
+    ev.push({ ri, ta: Math.max(0, Math.min(TA_MAX, Math.round(+sec || 0))), at: now ?? null });
     return ev;
   }
 
@@ -300,7 +296,7 @@
     return out;
   }
 
-  const Core = { parseTOD, fmtTOD, parseRel, fmtRel, cmpRI, sameRI, normRow, mergeRows, compute, activeIndex, legOf,
+  const Core = { parseTOD, fmtTOD, parseTA, fmtTA, TA_MAX, cmpRI, sameRI, normRow, mergeRows, compute, activeIndex, legOf,
     setTA, renameRI, lockEst, unlockEst, completeActive, CLOSE_MI, closeMi, fmtOCF, uncomplete, lastCompleted, toCSV, parseCSV, parseOCR };
   if (typeof module !== 'undefined' && module.exports) module.exports = Core; else root.Core = Core;
 })(typeof window !== 'undefined' ? window : globalThis);

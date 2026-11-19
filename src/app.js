@@ -127,7 +127,7 @@ function confirmBox(title, bodyHtml, okLabel, onOk, cancelLabel = 'Cancel') {
   $('modal').onclick = e => { if (e.target === $('modal')) close(); };
 }
 const fmtT = t => Core.fmtTOD(t, store.prefs.fmt);
-const fmtTA = s => Core.fmtRel(s, store.prefs.fmt === 'hmc' ? 'hmc' : 'ms') || '0:00';
+const fmtTA = s => Core.fmtTA(s) || '0:00';   // TA is always m:ss, whatever the Time format
 
 let view = 'rallies';
 function show(v) {
@@ -360,7 +360,7 @@ function renderRoute() {
     const w = document.querySelector('#v-route'); w.scrollTop = w.scrollHeight;
   };
   $('btnSort').onclick = () => { r.rows.sort((a, b) => Core.cmpRI(a.ri, b.ri)); save(r); renderRoute(); };
-  $('btnClearRT').onclick = () => confirmBox('Clear Route Instructions', `Remove all ${r.rows.length} Route Instructions from “${esc(r.name || 'this rally')}”? Completion marks and time adjustments go too.`, 'Clear', () => {
+  $('btnClearRT').onclick = () => confirmBox('Clear Route Instructions', `Remove all ${r.rows.length} Route Instructions from “${esc(r.name || 'this rally')}”? Completion marks and Time Allowances go too.`, 'Clear', () => {
     r.rows = []; r.taEvents = []; newSet.clear(); save(r); renderRoute();
   });
   $('btnPaste').onclick = pasteRows;
@@ -537,8 +537,8 @@ function renderRun() {
       <div class="ac-btns"><button id="btnUndo" ${done ? '' : 'disabled'}>Undo</button><button class="primary" id="btnDone">Complete RI ${esc(x.ri)} ✓</button></div>
     </div>
     <div class="ctl">
-      <div class="grp ta"><div class="lbl">Time adj.</div>
-        <button id="btnTA" class="num ${c.ta ? 'ta-on' : ''}" aria-label="Time adjustment">${fmtTA(c.ta)}</button></div>
+      <div class="grp ta">
+        <button id="btnTA" class="num ${c.ta ? 'ta-on' : ''}" aria-label="Time Allowance">TA ${fmtTA(c.ta)}</button></div>
       <div class="grp sp"><div class="lbl">Speedometer mph</div>
         <div class="stepper"><button data-sp="-5">−5</button><button data-sp="-1">−1</button><input id="fSpeedo" class="num" value="${esc(r.speedo)}" inputmode="decimal" enterkeyhint="done" aria-label="Speedometer mph"><button data-sp="1">+1</button><button data-sp="5">+5</button><button class="set" data-set="fSpeedo">Set</button></div></div>
     </div>`;
@@ -620,28 +620,29 @@ function editField(inp, commit) {
     set.addEventListener('mousedown', e => e.preventDefault());
   }
 }
-const TA_MAX = 90 * 60, SPEEDO_MAX = 100;
+const TA_MAX = Core.TA_MAX, SPEEDO_MAX = 100;
 // TA dialog: steps and typing change a pending value; Set applies it, Cancel or tapping outside leaves TA as it was.
 function taDialog(a) {
   const r = R(), C = Core.compute(r), x = r.rows[a];
   let pend = C[a].ta || 0;
   const steps = [-60, -15, -5, 5, 15, 60];
-  confirmBox(`Time adjustment`, `<div class="small muted">Applies from RI ${esc(x.ri)} through the RI before the next restart.
+  confirmBox(`Time Allowance`, `<div class="small muted">Applies from RI ${esc(x.ri)} through the RI before the next restart.
       Currently ${fmtTA(C[a].ta)}.</div>
     <input id="taIn" class="num" inputmode="text" enterkeyhint="done" value="${fmtTA(pend)}" style="font-size:28px;text-align:center;margin:10px 0;min-height:56px">
     <div class="tagrid">${steps.map(s => `<button data-st="${s}">${s < 0 ? '−' : '+'}${Math.abs(s)}</button>`).join('')}</div>
     <div class="row" style="margin-top:8px"><button id="taZero" style="flex:1">Zero</button></div>
-    <div class="small muted" style="margin-top:6px">Type seconds (−12), m:ss (+1:05), or minutes (.50m). Limit ±90:00.</div>`, 'Set', () => {
-      const s = Core.parseRel($('taIn').value);
-      if (s == null) { toast('TA: seconds (−12), m:ss (+1:05), or minutes (.50m)'); return false; }
-      if (Math.abs(s) > TA_MAX) { toast('TA is limited to ±90:00'); return false; }
+    <div class="small muted" style="margin-top:6px">Type seconds (90) or m:ss (1:05). Limit 90:00.</div>`, 'Set', () => {
+      const txt = $('taIn').value, s = Core.parseTA(txt);
+      if (/^\s*[-−–]/.test(txt)) { toast('TA cannot be negative'); return false; }
+      if (s == null) { toast('TA: seconds (90) or m:ss (1:05)'); return false; }
+      if (s > TA_MAX) { toast('TA is limited to 90:00'); return false; }
       setTA(a, s);
     });
   const inp = $('taIn');
   const show = () => { inp.value = fmtTA(pend); };
-  const readTyped = () => { const s = Core.parseRel(inp.value); if (s != null) pend = s; };
+  const readTyped = () => { const s = Core.parseTA(inp.value); if (s != null) pend = s; };
   document.querySelectorAll('#mBody [data-st]').forEach(b => b.onclick = () => {
-    readTyped(); pend = Math.max(-TA_MAX, Math.min(TA_MAX, pend + +b.dataset.st)); show(); });
+    readTyped(); pend = Math.max(0, Math.min(TA_MAX, pend + +b.dataset.st)); show(); });
   $('taZero').onclick = () => { pend = 0; show(); };
   selectOnTap(inp);
   inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('mOk').click(); } });
@@ -664,7 +665,7 @@ document.addEventListener('fullscreenchange', fsChange);
 document.addEventListener('webkitfullscreenchange', fsChange);
 
 function setTA(a, sec) {
-  const r = R(); sec = Math.max(-TA_MAX, Math.min(TA_MAX, Math.round(sec * 100) / 100));
+  const r = R(); sec = Math.max(0, Math.min(TA_MAX, Math.round(sec)));
   r.taEvents = Core.setTA(r, a, sec, now()); save(r); renderRun();
 }
 function setSpeedo(v) { const r = R(); r.speedo = v === '' ? '' : Math.min(SPEEDO_MAX, Math.max(1, Math.round(v * 10) / 10)); save(r); renderRun(); }

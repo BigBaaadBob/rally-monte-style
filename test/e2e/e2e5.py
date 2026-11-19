@@ -24,12 +24,14 @@ async def main():
         order = await pg.eval_on_selector_all('.ctl .grp', 'e=>e.map(x=>x.className.split(/\\s+/))')
         check(len(order) == 2 and 'ta' in order[0] and 'sp' in order[1], f'control strip order is TA then speedometer ({order})')
 
-        zero = await pg.evaluate('fmtTA(0)')
+        zero = 'TA ' + await pg.evaluate('fmtTA(0)')
         check(await pg.inner_text('#btnTA') == zero, f'TA button starts at {zero}')
+        check(not await pg.evaluate("/time adj/i.test(document.body.innerText)"), 'no visible "Time adj" text')
         # TA dialog (DESIGN l.25): +60, +15, -5 are pending: 70 s until Set.
         await pg.click('#btnTA'); await pg.click('[data-st="60"]'); await pg.click('[data-st="15"]'); await pg.click('[data-st="-5"]')
         want = await pg.evaluate('fmtTA(70)')
         check(await pg.input_value('#taIn') == want, f'pending TA is +60 +15 -5 = 70 s, shown as {want}')
+        check(await pg.inner_text('#mTitle') == 'Time Allowance', 'the TA dialog is titled Time Allowance')
         await pg.screenshot(path=str(OUT_DIR / '17-tadlg.png'))
         await pg.click('#mCancel')
         check(await pg.inner_text('#btnTA') == zero, 'Cancel leaves TA unchanged')
@@ -39,17 +41,31 @@ async def main():
         # Set applies the TA: the button and the active card's TT follow Core (TT = CZT + CN + TA, DESIGN l.14).
         await pg.click('#btnTA'); await pg.click('[data-st="60"]'); await pg.click('[data-st="15"]'); await pg.click('#mOk')
         want = await pg.evaluate('fmtTA(75)')
-        check(await pg.inner_text('#btnTA') == want, f'Set applies +60 +15 = 75 s, shown as {want}')
+        check(await pg.inner_text('#btnTA') == 'TA ' + want, f'Set applies +60 +15 = 75 s, shown as TA {want}')
         tt = await pg.evaluate("""(() => { const c = Core.compute(R())[Core.activeIndex(R())];
             return {want: c.tt != null ? fmtT(c.tt) : '≈' + fmtT(c.est), got: document.querySelectorAll('.ac-nums .big')[1].textContent.trim()}; })()""")
         check(tt['got'] == tt['want'], f"active card TT follows the TA (page {tt['got']!r}, Core {tt['want']!r})")
 
-        await pg.click('#btnTA'); await pg.fill('#taIn', '-95:00'); await pg.click('#mOk')
-        check(await pg.is_visible('#modal.on'), 'an entry beyond +/-90:00 keeps the dialog open')
+        # Rejected entries keep the dialog open and leave TA unchanged: beyond 90:00, negative, decimal, fractional, seconds >= 60.
+        cur = await pg.inner_text('#btnTA')
+        for bad in ['95:00', '-0:30', '-12', '.50m', '1.5', '1:60']:
+            await pg.click('#btnTA'); await pg.fill('#taIn', bad); await pg.click('#mOk')
+            check(await pg.is_visible('#modal.on'), f'entry {bad!r} keeps the dialog open')
+            await pg.click('#mCancel')
+        check(await pg.inner_text('#btnTA') == cur, 'rejected entries leave TA unchanged')
+        # A minus step from 0:00 stays at 0:00.
+        await pg.click('#btnTA'); await pg.click('#taZero'); await pg.click('[data-st="-60"]')
+        check(await pg.input_value('#taIn') == zero[3:], 'a minus step from 0:00 stays at 0:00')
         await pg.click('#mCancel')
-        await pg.click('#btnTA'); await pg.click('#taIn'); await pg.keyboard.type('-0:30'); await pg.keyboard.press('Enter')
-        want = await pg.evaluate('fmtTA(-30)')
-        check(await pg.inner_text('#btnTA') == want, f'typed -0:30 plus Enter commits ({want})')
+        # Accepted forms: m:ss, +m:ss, bare seconds.
+        for typed, sec in [('2:00', 120), ('+1:05', 65), ('12', 12)]:
+            await pg.click('#btnTA'); await pg.click('#taIn'); await pg.keyboard.type(typed); await pg.keyboard.press('Enter')
+            want = await pg.evaluate(f'fmtTA({sec})')
+            check(await pg.inner_text('#btnTA') == 'TA ' + want and await pg.evaluate('R().taEvents.at(-1).ta') == sec, f'typed {typed} plus Enter sets {sec} s ({want})')
+        # TA stays m:ss under the HH:MM.cc Time format.
+        await pg.evaluate("store.prefs.fmt = 'hmc'; renderRun()")
+        check(await pg.inner_text('#btnTA') == 'TA ' + await pg.evaluate('fmtTA(12)'), 'TA is still m:ss with Time format HH:MM.cc')
+        await pg.evaluate("store.prefs.fmt = 'hms'; renderRun()")
 
         for k in ['5','5','-1']: await pg.click(f'[data-sp="{k}"]')
         check(await pg.input_value('#fSpeedo') == str(START_SPEEDO + 5 + 5 - 1), f'speedometer is {START_SPEEDO} +5 +5 -1')

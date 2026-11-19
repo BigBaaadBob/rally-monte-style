@@ -82,13 +82,13 @@ Merging is done by the owner on GitHub after review.
 Source files must never contain `</script` (the build asserts this). Edit `src/` and `web/`, never `dist/` (it is gitignored and wiped on each build).
 
 **Core vs. UI split.**
-- `src/core.js` holds pure computation, with no DOM and no clock: time parsing and formatting, `normRow`, `mergeRows` (merge by RI and sort, keeping completion state), `compute` (legs, restarts, VM, TT, TA, estimates, close rows), CSV export, `parseCSV` (CSV import), and `parseOCR` (extracting JSON rows from model replies). It is a UMD-style IIFE: it exports via `module.exports` for Node tests, or sets `window.Core` in the browser. Keep it free of side effects so `test/core.test.js` can `require` it.
+- `src/core.js` holds pure computation, with no DOM and no clock: time parsing and formatting, `normRow`, `mergeRows` (merge by RI and sort, keeping completion state), `compute` (legs, restarts, VM, TT, Time Allowance (TA), estimates, close rows), CSV export, `parseCSV` (CSV import), and `parseOCR` (extracting JSON rows from model replies). It is a UMD-style IIFE: it exports via `module.exports` for Node tests, or sets `window.Core` in the browser. Keep it free of side effects so `test/core.test.js` can `require` it.
 - `src/sample.js` is the invented "Sample Rally" (`{ rally, rows }`: details and rows), used by the unit tests and by the New from sample button. It uses the same dual export pattern.
 - `src/app.js` is the whole UI: tabs (Rallies, Route, Run, Data), modals, and storage. `R()` returns the current rally.
 
 **Computation rules that are easy to break** (see DESIGN.md "Computation"):
 - The first row starts leg 1 (it need not be a restart; there is no `leg: null`). Each later restart (OM printed `x.xx/0.00`) starts a new leg at VM 0 and TA 0. A bare `/0.00` is a restart at OM 0.00. A row with no OM has no VM or estimate, shows a TT only if it has a CZT, and is never close.
-- TA is stored as events `{ri, ta, at}`. Each event applies from its row through the end of the leg, and a later event in the same leg overrides it.
+- TA (Time Allowance) is stored as events `{ri, ta, at}`, with `ta` in whole seconds, never negative (0 to 90:00). Each event applies from its row through the end of the leg, and a later event in the same leg overrides it.
 - Estimated TT = TT of the nearest earlier row in the same leg with both a TT and a VM + ΔVM ÷ speedometer mph. An estimate locks only when its row is completed.
 - No system clock or sensor value feeds any computation. Timestamps are only logged.
 
