@@ -7,6 +7,10 @@ Moved from the claude.ai "Road Rally" Project. The app was first delivered as a 
 - User-visible text calls both the source pages and the app's table Route Instructions; RI means only a single Route Instruction; never Route Table, RT, RIs, or route information.
 - Adds VM and TT columns. OM and CZT are hidden on the Run screen.
 - Prep: rally name, date, crew (driver, navigator, and passengers), vehicle (free text, optional; Crew and vehicle card; shown only on the set-up form), car number (CN), Class (A, B, C, or D; same line as OCF), OCF (always displayed with four decimals, e.g. 1.0100; the Data summary does too), and the close-RI limit. Internet is allowed.
+- Setup entry rules (each is checked when the field is committed, by leaving it or pressing Enter; a rejected entry shows its message and the field reverts to its previous value, so nothing is partly applied):
+  - CN: blank or a whole number from 0 to 999; blank computes as 0 minutes. Otherwise "Car number must be a whole number from 0 to 999".
+  - Close-RI limit: blank or a number from 0 to 5.0 vehicle miles. Blank is stored and shown as the 0.5 default; 0 flags only rows with identical VMs. Otherwise "Close RI limit must be between 0 and 5.0 miles".
+  - OCF: a number greater than 0, shown to four decimals. Blank, 0, a negative number, or text is rejected with "OCF must be a positive number.".
 - New from sample (Rallies tab): each tap creates a new rally from the built-in sample and opens set-up. Name "Sample Rally", today's date, CN 7, Class C, OCF 1.0100, vehicle "Rally Car", crew Jane Driver and John Navigator with no passengers, speedometer at its start value, the default close limit, no TA, nothing completed.
 - Run: shows the first uncompleted RI. Small Undo button and a 58 px Complete button; tap a ✓ to un-complete that row. No internet needed.
 
@@ -36,6 +40,7 @@ Moved from the claude.ai "Road Rally" Project. The app was first delivered as a 
 - VM = OM × OCF.
 - The first row starts the first leg. Each later restart (OM printed "x.xx/0.00") starts a new leg at VM 0 and TA 0. The first row need not be printed "/0.00", because pages may be read in any order; there is no check or warning on it. There is no separate leg for rows before the first restart: they are in leg 1, with VM = OM × OCF in the printed frame. A leg is identified by the RI of its first row.
 - A bare "/0.00" OM is a restart at OM 0.00. This is how a rally's start RI is printed. It is accepted wherever OMs are read: row entry, CSV and JSON paste, and both reading prompts.
+- Row entry of an OM accepts only blank, a number (x.xx), a restart (x.xx/0.00), or a bare restart (/0.00). Any other entry, such as 5/3, is rejected with "OM format: x.xx, x.xx/0.00, or /0.00", and the row's OM and Rst stay as they were.
 - A row with no OM (for example the finish RI) shows no VM and no estimate, and shows a TT only if it has a CZT. It is skipped when checking close rows and can be completed like any other row.
 - TT = CZT + CN minutes + TA.
 - TA (confirmed by the owner): a TA entered on a row applies from that row through the row before the next restart. Rows before it keep their TT, and a restart starts at TA 0. A later TA in the same leg replaces the earlier one from its own row on. The app stores TA as events {ri, ta, at}.
@@ -43,12 +48,12 @@ Moved from the claude.ai "Road Rally" Project. The app was first delivered as a 
 - Estimator (confirmed by the owner): estimated TT = TT of the nearest earlier row in the same leg that has both a TT and a VM + ΔVM ÷ speedometer mph. A row with a TT but no VM is skipped. A negative ΔVM counts as 0. ΔVM and the speedometer are both in vehicle units, so the OCF is accounted for.
 - Estimates are always shown (≈, italic) in the TT column of every row without a CZT, wherever an earlier TT exists in the leg. Nothing to tap.
 - Locking: an estimate is locked only when its RI is completed; it then ignores later speedometer and TA changes. Un-completing releases it. No lock symbol.
-- Speedometer: saved with each rally (reloading keeps it). A new rally starts at 35 mph.
+- Speedometer: saved with each rally (reloading keeps it, and a blank value is never saved or reset on load). A new rally starts at 35 mph.
 - Close rows: adjacent rows whose VM gap is ≤ the per-rally limit (Setup; default 0.5 vehicle miles) are highlighted in the VM cell. Across a restart the gap runs to the previous frame's end. The active card shows "NEXT IN x.xx".
 - No system clock or sensor feeds any computation. Completion timestamps are logged only.
 
 ## Run controls
-- One strip: a TA button on the left (shows the current TA, highlighted when non-zero) and the speedometer on the right (−5 −1 [mph] +1 +5, limit 1–100 mph).
+- One strip: a TA button on the left (shows the current TA, highlighted when non-zero) and the speedometer on the right (−5 −1 [mph] +1 +5, limit 1–100 mph; a blank entry is invalid, like any value outside 1–100: it shows "Speedometer must be between 1 and 100 mph" and reverts).
 - TA dialog: a big entry field, ±5, ±15, and ±60 s buttons, and Zero. Changes are pending until Set; Cancel or tapping outside leaves TA unchanged. Limit ±90:00; an invalid entry keeps the dialog open.
 - Direct entry: tapping a field selects its value. Enter or Set commits; for the speedometer, tapping away or Esc leaves the value unchanged.
 - Full screen (⛶ in the header): asks the browser for full screen where allowed, and always hides the app's header and tabs. A small ✕ (top right) exits.
