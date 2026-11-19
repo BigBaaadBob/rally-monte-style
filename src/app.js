@@ -31,7 +31,7 @@ try {
   const raw = localStorage.getItem(LS_KEY);
   if (raw) { const s = JSON.parse(raw); store = { ...store, ...s, prefs: { ...store.prefs, ...(s.prefs || {}) } }; }
 } catch (e) { lsOK = false; }
-for (const r of Object.values(store.rallies)) { if (r.speedo === '' || r.speedo == null) r.speedo = SPEEDO_START; if (typeof r.vehicle !== 'string') r.vehicle = ''; }
+for (const r of Object.values(store.rallies)) { if (typeof r.vehicle !== 'string') r.vehicle = ''; }
 
 function newId() { return 'r' + now().toString(36) + Math.random().toString(36).slice(2, 7); }
 function blankRally() {
@@ -248,14 +248,23 @@ function renderSetup() {
     <li>Route: add photos of the Route Instruction pages and check the Route Instructions (needs internet).</li>
     <li>Run: complete each RI as you reach it. No internet needed.</li></ol>
     <div class="row" style="margin-top:8px"><button class="primary" id="goRoute">Go to Route</button></div></div>`;
-  const ocfHelp = () => { const v = +r.ocf; $('ocfHelp').textContent = v > 0 ? (v === 1 ? 'OCF 1.0000: VM equals OM.' : `Your odometer reads ${((v - 1) * 100).toFixed(2)}% ${v > 1 ? 'more' : 'less'} than official.`) : 'OCF must be a positive number.'; };
+  const ocfHelp = () => { const v = +r.ocf; $('ocfHelp').textContent = v === 1 ? 'OCF 1.0000: VM equals OM.' : `Your odometer reads ${((v - 1) * 100).toFixed(2)}% ${v > 1 ? 'more' : 'less'} than official.`; };
   ocfHelp();
   const bind = (id, fn) => $(id).addEventListener('input', e => { fn(e.target.value); save(r); renderHeader(); });
   bind('fName', v => r.name = v);
   bind('fDate', v => r.date = v);
-  bind('fCN', v => { r.cn = v.trim() === '' ? '' : (isNaN(+v) ? r.cn : +v); });
-  bind('fOCF', v => { if (+v > 0) r.ocf = +v; ocfHelp(); });
-  bind('fClose', v => { const s = v.trim(); if (s === '' || +s >= 0) r.closeMi = s === '' ? '' : +s; });
+  // CN, OCF, and the close limit are checked when committed (change event); a bad entry shows its message and reverts.
+  const checked = (id, parse, msg, apply, show) => $(id).addEventListener('change', e => {
+    const v = parse(e.target.value);
+    if (v === undefined) { toast(msg); e.target.value = show(); return; }
+    apply(v); e.target.value = show(); save(r); renderHeader();
+  });
+  checked('fCN', v => { const s = v.trim(); return s === '' ? '' : /^\d{1,3}$/.test(s) ? +s : undefined; },
+    'Car number must be a whole number from 0 to 999', v => { r.cn = v; }, () => String(r.cn ?? ''));
+  checked('fOCF', v => { const s = v.trim(); return s !== '' && Number.isFinite(+s) && +s > 0 ? +s : undefined; },
+    'OCF must be a positive number.', v => { r.ocf = v; ocfHelp(); }, () => fmtOCF(r.ocf));
+  checked('fClose', v => { const s = v.trim(); return s === '' ? Core.CLOSE_MI : Number.isFinite(+s) && +s >= 0 && +s <= 5 ? +s : undefined; },
+    'Close RI limit must be between 0 and 5.0 miles', v => { r.closeMi = v; }, () => String(r.closeMi ?? Core.CLOSE_MI));
   $('fCls').onchange = e => { r.cls = e.target.value; save(r); renderHeader(); };
   bind('fDrv', v => c.driver = v);
   bind('fNav', v => c.navigator = v);
@@ -363,7 +372,11 @@ function renderRoute() {
     const el = e.target, i = +el.dataset.i, k = el.dataset.k; if (k == null) return;
     const row = r.rows[i];
     if (k === 'restart') row.restart = el.checked;
-    else if (k === 'om') { const v = el.value.trim(); if (/\//.test(v)) { const n = Core.normRow({ om: v }); row.om = n.om; row.restart = true; } else row.om = v === '' || isNaN(+v) ? null : +v; }
+    else if (k === 'om') { const v = el.value.replace(/\s/g, '');
+      if (v === '') row.om = null;
+      else if (/^(\d*\.?\d+)?\/0*\.?0+$/.test(v)) { const n = Core.normRow({ om: v }); row.om = n.om; row.restart = true; }
+      else if (/^\d*\.?\d+$/.test(v)) row.om = +v;
+      else { toast('OM format: x.xx, x.xx/0.00, or /0.00'); renderRoute(); return; } }
     else if (k === 'czt') { const v = el.value.trim(); const t = Core.parseTOD(v); if (v && t == null) { toast('CZT format: HH:MM:SS or HH:MM.cc'); renderRoute(); return; } row.czt = t; }
     else if (k === 'ri') { const res = Core.renameRI(r, i, el.value);
       if (!res.ok) { toast(res.reason); renderRoute(); return; }
@@ -584,8 +597,8 @@ function renderRun() {
   v.querySelectorAll('[data-sp]').forEach(b => b.onclick = () => setSpeedo((+r.speedo || 0) + +b.dataset.sp));
   if ($('fSpeedo')) editField($('fSpeedo'), val => {
     const s = val.trim();
-    if (s !== '' && !(+s > 0 && +s <= SPEEDO_MAX)) { toast(`Speedometer must be between 1 and ${SPEEDO_MAX} mph`); return false; }
-    setSpeedo(s === '' ? '' : +s);
+    if (s === '' || !(+s >= 1 && +s <= SPEEDO_MAX)) { toast(`Speedometer must be between 1 and ${SPEEDO_MAX} mph`); return false; }
+    setSpeedo(+s);
   });
   $('runTbl').addEventListener('click', e => {
     const chk = e.target.closest('[data-chk]');
