@@ -298,9 +298,9 @@ function renderRoute() {
   $('routeBody').innerHTML = `
   <div class="card narrow" style="max-width:none">
     <h2>Read Route Instruction pages</h2>
-    <div class="small muted">${caps.sample ? 'Claude reads each photo (internet required). The first time, Claude asks your permission. If “Add page photos” does nothing (the Claude Android app), use “Read in a Claude chat…”.'
+    <div class="small muted">${caps.sample ? 'Claude reads each photo (internet required). The first time, Claude asks your permission.'
       : getApiKey() ? 'Photos are sent to the Anthropic API with the key saved on this device. Internet is needed only for reading.'
-      : 'To read photos, enter your Anthropic API key below (kept only on this device), or use “Read in a Claude chat…”.'}</div>
+      : 'To read photos, enter your Anthropic API key below (kept only on this device).'}</div>
     ${caps.sample ? '' : `<div class="reader">
       <div><label for="fKey">Anthropic API key</label><input id="fKey" type="password" autocomplete="off" placeholder="${getApiKey() ? '•••••••• saved — type to replace' : 'sk-ant-…'}"></div>
       <button id="bKey">${getApiKey() ? 'Replace' : 'Save'}</button>
@@ -309,11 +309,10 @@ function renderRoute() {
     <div class="row" style="margin-top:8px">
       <span class="filebtn primary">Add page photos<input type="file" id="fPages" accept="image/*" multiple aria-label="Add page photos"></span>
       <button id="btnRead" ${pages.some(p => p.state !== 'ok') ? '' : 'disabled'}>Read ${pages.filter(p => p.state !== 'ok').length || ''} page(s)</button>
-      <button id="btnChat">Read in a Claude chat…</button>
       ${pages.length ? '<button id="btnClearPages">Clear photos</button>' : ''}
     </div>
     <div class="thumbs">${pages.map((p, i) => `<figure class="${p.state}"><img src="${p.url}" alt="page ${i + 1}"><figcaption>${esc(p.msg || p.file.name)}</figcaption>
-      ${!caps.sample && getApiKey() && (p.state === 'ok' || p.state === 'bad') && p.model !== OPUS ? `<button data-opus="${i}" title="Read this page again with Opus 5.5">Re-read: Opus</button>` : ''}</figure>`).join('')}</div>
+      ${(p.state === 'ok' || p.state === 'bad') && canOCR ? `<button data-reread="${i}" title="Read this page again with the selected model">Re-read</button>` : ''}</figure>`).join('')}</div>
   </div>
   <div class="row" style="margin-bottom:8px">
     <strong>${r.rows.length} Route Instructions</strong>
@@ -342,9 +341,8 @@ function renderRoute() {
   };
   if ($('btnClearPages')) $('btnClearPages').onclick = () => { pages.forEach(p => URL.revokeObjectURL(p.url)); pages = []; renderRoute(); };
   if ($('btnRead')) $('btnRead').onclick = () => canOCR ? readPages() : confirmBox('No photo reader here',
-    `Reading photos needs your Anthropic API key: enter it in the box above. It stays on this device.<br><br>
-     Without a key, use <b>Read in a Claude chat…</b>: Claude reads the photos in a chat and you paste the result here.`,
-    'Read in a Claude chat…', () => { chatRead(); }, 'Close');
+    `Reading photos needs your Anthropic API key: enter it in the box above. It stays on this device.`,
+    'OK', null, '');
   if ($('bKey')) $('bKey').onclick = () => {
     const k = $('fKey').value.trim();
     if (!k) { toast(getApiKey() ? 'Type a new key to replace the saved one' : 'Paste your API key first'); return; }
@@ -353,8 +351,7 @@ function renderRoute() {
     renderRoute();
   };
   if ($('fModel')) $('fModel').onchange = e => { store.prefs.model = e.target.value; save(); };
-  document.querySelectorAll('#routeBody [data-opus]').forEach(b => b.onclick = () => readPages([+b.dataset.opus], OPUS));
-  $('btnChat').onclick = chatRead;
+  document.querySelectorAll('#routeBody [data-reread]').forEach(b => b.onclick = () => readPages([+b.dataset.reread]));
   $('btnAdd').onclick = () => {
     const last = r.rows[r.rows.length - 1];
     const ri = last ? (typeof last.ri === 'number' ? last.ri + 1 : String(last.ri) + '+') : 1;
@@ -446,7 +443,7 @@ async function ocrOne(blob, model) {
   }); } catch (e) { throw new Error('Could not reach the Anthropic API (' + (e.message || 'network error') + '). Check the internet connection.'); }
   if (!resp.ok) throw new Error(resp.status === 401 ? 'The API key was rejected (401). Check it on the Route tab.' : resp.status === 402 || resp.status === 403 ? 'The API refused the request (' + resp.status + '). Check the account has credit and the key is allowed to use ' + model + '.' : 'API ' + resp.status + ': ' + (await resp.text()).slice(0, 160));
   const j = await resp.json();
-  if (j.stop_reason === 'max_tokens') throw new Error('The reply was cut off (page too long). Try Re-read: Opus, or split the photo.');
+  if (j.stop_reason === 'max_tokens') throw new Error('The reply was cut off (page too long). Select Opus 5.5 and tap Re-read, or split the photo.');
   return Core.parseOCR((j.content || []).filter(c => c.type === 'text').map(c => c.text).join(''));
 }
 
@@ -478,23 +475,6 @@ async function readPages(only, model) {
   if (msgs.length) confirmBox('Pages read', msgs.map(esc).join('<br>') + '<br><br>Rows are merged by RI and sorted. Highlighted rows need checking.', 'OK', null, '');
 }
 
-const CHAT_PROMPT = `I'm attaching photos of SCCA RoadRally Route Instruction pages. Transcribe every route instruction (RI) row from all pages into ONE JSON array, in RI order, inside a single \`\`\`json code block, with nothing else after it.
-Each element: {"ri": RI number as printed, "om": the OM column EXACTLY as printed as a string (keep a restart's slash, e.g. "13.27/0.00", or "/0.00" for the start), "czt": CZT as printed ("HH:MM:SS" or "HH:MM.cc") or null, "cp": checkpoint number or null, "instr": instruction text exactly as printed, "info": any notes text or "", "note": only if something is illegible or uncertain}.
-Include rows with no CZT. Never guess: use null for blank cells.`;
-// Read the pages in an ordinary Claude chat (works where this page cannot open the photo picker).
-function chatRead() {
-  confirmBox('Read pages in a Claude chat', `<ol class="steps">
-      <li>Tap <b>Copy instructions</b>.</li>
-      <li>Open a new Claude chat, attach the page photos, paste the instructions, and send.</li>
-      <li>Copy Claude's whole reply, come back here, and tap <b>Paste rows</b>.</li></ol>
-    <div class="small muted">Rows are merged by RI, so you can do this a few pages at a time.</div>`,
-    'Paste rows', () => { pasteRows(); }, 'Close');
-  const b = document.createElement('button'); b.textContent = 'Copy instructions'; b.className = 'primary'; b.style.marginTop = '8px'; b.style.width = '100%';
-  b.onclick = async () => { try { await navigator.clipboard.writeText(CHAT_PROMPT); b.textContent = 'Copied ✓'; }
-    catch (e) { const ta = document.createElement('textarea'); ta.rows = 6; ta.readOnly = true; ta.value = CHAT_PROMPT; ta.style.fontSize = '12px'; ta.style.marginTop = '6px';
-      b.replaceWith(ta); ta.focus(); ta.select(); toast('Select all and copy this text'); } };
-  $('mBody').appendChild(b);
-}
 // A copied photo can be pasted on the Route tab (Ctrl/Cmd-V, or long-press → Paste where the device allows).
 document.addEventListener('paste', e => {
   if (view !== 'route' || $('modal').classList.contains('on')) return;
@@ -506,12 +486,11 @@ document.addEventListener('paste', e => {
 });
 
 function pasteRows() {
-  confirmBox('Paste rows', `<div class="small muted">Paste Claude's reply (its JSON is found automatically), a JSON array of rows, or CSV lines: RI,OM,CZT,CP,Instruction,Info.</div>
+  confirmBox('Paste rows', `<div class="small muted">Paste CSV with a header line: RI,OM,CZT,CP,Instruction,Info. An exported rally CSV works as is.</div>
     <textarea id="pasteBox" rows="10" style="margin-top:8px;font-size:13px"></textarea>`, 'Merge', () => {
     const t = $('pasteBox').value.trim(); if (!t) return;
     let rows = [];
-    try { rows = Core.parseOCR(t); } catch (e) { rows = []; }
-    if (!rows.length && /^[^\n]*,[^\n]*,/m.test(t)) { try { rows = Core.parseCSV(t); } catch (e) { rows = []; } }
+    try { rows = Core.parseCSV(t); } catch (e) { rows = []; }
     if (!rows.length) { toast('No rows found in that text'); return false; }
     toast(mergeIntoRally(rows, 'Pasted')); renderRoute();
   });

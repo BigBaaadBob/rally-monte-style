@@ -210,7 +210,7 @@ assert.ok(csv.includes(`${r2.ri},Y,${r2.om.toFixed(2)}/0.00,${(r2.om * 1.02).toF
 { const p = R.rows[kp]; assert.ok(csv.includes(`${p.ri},,${p.om.toFixed(2)},${(p.om * 1.02).toFixed(2)},`), 'CSV plain row'); }
 assert.ok(csv.includes(`${R.rows[0].ri},Y,0.00/0.00,0.00,`), 'CSV first row is a restart at OM 0.00 with no previous frame');
 assert.ok(csv.includes(`${R.rows[kno].ri},,,,`), 'CSV row with no OM has empty OM and VM');
-// CSV import: an export re-imports by header name (a restart OM carries the restart); bare lines use RI,OM,CZT,CP,Instruction,Info
+// CSV import: an export re-imports by header name (a restart OM carries the restart); text with no RI header line finds no rows
 { const rows = Core.parseCSV(csv);
   assert.strictEqual(rows.length, R.rows.length, 'exported CSV re-imports every row');
   const norm = R.rows.map(x => Core.normRow(x)), back = rows.map(x => Core.normRow(x));
@@ -221,7 +221,10 @@ assert.ok(csv.includes(`${R.rows[kno].ri},,,,`), 'CSV row with no OM has empty O
   assert.deepStrictEqual([q[0].ri, q[0].om, q[0].instr, q[0].info], ['7', '1.25', 'Left, then "right"\nnext line', 'ok'], 'quoted commas, quotes, and newlines'); }
 { const b = Core.parseCSV('RI,OM,CZT,CP,Instruction,Info\n210,1.50,,,"R at [sign]",note\n211,1.70,16:20:00,90,CHECKPOINT,');
   assert.deepStrictEqual(b.map(x => [x.ri, x.om, x.czt, x.cp, x.instr]), [['210', '1.50', null, null, 'R at [sign]'], ['211', '1.70', '16:20:00', '90', 'CHECKPOINT']], 'bare lines with a header'); }
-assert.strictEqual(Core.parseCSV('210,1.50,,,x,y').length, 1, 'bare line without a header');
+assert.strictEqual(Core.parseCSV('210,1.50,,,x,y').length, 0, 'lines without a header line find no rows');
+assert.strictEqual(Core.parseCSV('```json\n[{"ri":1,"om":"2.29","czt":null},\n {"ri":2,"om":"3.10","czt":null}]\n```').length, 0, 'pasted JSON finds no rows');
+assert.strictEqual(Core.parseCSV('Here are the rows, and a few more, thanks.').length, 0, 'prose finds no rows');
+assert.strictEqual(Core.parseCSV('').length, 0, 'empty text finds no rows');
 // Vehicle (DESIGN Scope and Storage): a CSV details line directly after the crew lines, quoted like any field, written even when empty
 { const crew = { driver: 'Jane Driver', navigator: 'John Navigator', passengers: ['Pat Example'] };
   const lines = s => s.split('\n');
@@ -241,6 +244,13 @@ assert.strictEqual(Core.parseOCR('Here: {"rows":[{"ri":1},{"ri":2}]}').length, 2
 assert.strictEqual(Core.parseOCR('Row 3 reads [curve-left sign]. Here it is:\n[{"ri":3,"instr":"at [sign]"}]\nDone.').length, 1);
 assert.strictEqual(Core.parseOCR('Page 1:\n```json\n[{"ri":1}]\n```\nPage 2:\n```json\n[{"ri":2},{"ri":3}]\n```').length, 3);
 assert.strictEqual(Core.parseOCR('[]').length, 0);
+// #36: a fenced block that isn't JSON is skipped; the valid blocks still count
+{ const rows = Core.parseOCR('Note:\n```text\nRI 1 is hard to read, sorry\n```\nRows:\n```json\n[{"ri":4},{"ri":5}]\n```');
+  assert.deepStrictEqual(rows.map(x => x.ri), [4, 5], 'a non-JSON fence before a valid json block is skipped'); }
+{ const rows = Core.parseOCR('```json\n[{"ri":1}]\n```\n```python\nprint(1)\n```\n```json\n[{"ri":2}]\n```');
+  assert.deepStrictEqual(rows.map(x => x.ri), [1, 2], 'a non-JSON fence between valid blocks is skipped and the valid blocks are combined'); }
+assert.strictEqual(Core.parseOCR('```text\nnot rows\n```').length, 0, 'a reply with no valid block finds no rows');
+assert.strictEqual(Core.parseOCR('no JSON here at all').length, 0, 'prose with no JSON finds no rows');
 
 // renameRI moves the row's TA events; rejected renames leave them alone
 { const Rr = base(), C0 = Core.compute(Rr);
