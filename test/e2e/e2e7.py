@@ -1,4 +1,4 @@
-"""Route screen: paste/CSV import, offline copy, and Read without an API key.
+"""Route screen: paste/CSV import and Read without an API key.
 Run from the repo root after a build:
   Windows:    .venv/Scripts/python build.py && .venv/Scripts/python test/e2e/e2e7.py
   Linux/WSL:  .venv/bin/python build.py && .venv/bin/python test/e2e/e2e7.py
@@ -17,28 +17,15 @@ REPLY = '''Here are the rows. RI {ri} is at the [curve-left sign].
  {{"ri":"{ri}A","om":"2.40","czt":null,"cp":null,"instr":"new row","info":""}}]
 ```'''
 CSV = 'RI,OM,CZT,CP,Instruction,Info\n210,1.50,,,"R at [sign]",note\n211,1.70,16:20:00,90,CHECKPOINT,'
-INJECT = """new MutationObserver((m, o) => { if (document.head && !document.getElementById('fakecsp')) {
-  const meta = document.createElement('meta'); meta.httpEquiv = 'Content-Security-Policy'; meta.content = "connect-src 'self'"; meta.id = 'fakecsp';
-  document.head.prepend(meta); const sc = document.createElement('script'); sc.textContent = 'window.__injected=1'; document.head.appendChild(sc); o.disconnect(); } })
-  .observe(document, { childList: true, subtree: true });"""
 ROWS = "R().rows.map(r => r.ri + ':' + r.instr).join('|')"
 
 async def main():
     async with async_playwright() as p:
         b = await launch_browser(p)
         ctx = await b.new_context(viewport={'width':390,'height':844}, has_touch=True, is_mobile=True)
-        await ctx.add_init_script(INJECT)
         await ctx.grant_permissions(['clipboard-read','clipboard-write'])
         pg = await ctx.new_page(); capture_errors(pg, label='live page')
         await pg.goto(APP_URL); await pg.evaluate('localStorage.clear()'); await pg.reload()
-        # DESIGN § Getting the Route Instructions in (Offline copy): the offline copy strips security-policy meta tags and scripts injected by the host.
-        check(await pg.evaluate("!!document.getElementById('fakecsp') && window.__injected === 1"), 'test setup: the injected CSP meta and script are in the live page')
-        selfhtml = await pg.evaluate('SELF_HTML')
-        check('fakecsp' not in selfhtml, 'offline copy has no injected CSP meta')
-        check('__injected' not in selfhtml, 'offline copy has no injected script')
-        ours = await pg.evaluate("document.querySelectorAll('script[data-rt]').length")
-        check(ours > 0 and selfhtml.count('<script data-rt') == ours, f"offline copy keeps the app's own scripts ({selfhtml.count('<script data-rt')} of {ours})")
-        (OUT_DIR / 'offline.html').write_text(selfhtml, encoding='utf-8')
         await pg.click('#btnNewSample')
         # DESIGN Scope, New from sample: each tap makes a separate rally with the sample's details; set-up opens.
         d = await pg.evaluate("(() => { const r = R(); return {name: r.name, cn: r.cn, cls: r.cls, ocf: r.ocf, veh: r.vehicle, crew: r.crew, ta: r.taEvents.length, done: r.rows.filter(x => x.done).length, n: r.rows.length, id: r.id}; })()")
@@ -134,13 +121,17 @@ async def main():
         await pg.click('#tabs button[data-v=route]')
         await pg.click('#btnPaste'); await pg.fill('#pasteBox', csv_text); await pg.click('#mOk')
         check(await pg.evaluate(PROPS) == rows_exported and len(rows_exported) > 0, f'an exported CSV re-imports the same {len(rows_exported)} rows through Paste rows')
-        # offline copy runs standalone; Read explains the API key (DESIGN § Getting the Route Instructions in)
-        pg2 = await (await b.new_context(viewport={'width':390,'height':844})).new_page(); capture_errors(pg2, label='offline copy')
-        await pg2.goto((OUT_DIR / 'offline.html').as_uri()); await pg2.click('#btnNewSample'); await pg2.click('#tabs button[data-v=route]')
-        await pg2.set_input_files('#fPages', PAGE); await pg2.click('#btnRead')
-        body = await pg2.inner_text('#mBody')
-        check(await pg2.is_visible('#modal.on') and 'api key' in body.lower(), f"offline Read without a key explains the API key ({await pg2.inner_text('#mTitle')!r})")
-        await pg2.screenshot(path=str(OUT_DIR / '22-offline-read.png'))
-        await pg2.click('#mOk')
+        # DESIGN § Getting the Route Instructions in: with no API key, Read explains that a key is needed.
+        check(await pg.evaluate("localStorage.getItem('rallyMonteStyle.apikey')") is None, 'test setup: no API key is saved')
+        await pg.click('#tabs button[data-v=route]')
+        await pg.set_input_files('#fPages', PAGE); await pg.click('#btnRead')
+        body = await pg.inner_text('#mBody')
+        check(await pg.is_visible('#modal.on') and 'api key' in body.lower(), f"Read without a key explains the API key ({await pg.inner_text('#mTitle')!r})")
+        await pg.screenshot(path=str(OUT_DIR / '22-read-no-key.png'))
+        await pg.click('#mOk')
+        # DESIGN § Storage / Data: no offline-copy button; the header shows the storage status.
+        await pg.click('#tabs button[data-v=data]')
+        check(await pg.query_selector('#xApp') is None and 'offline copy' not in (await pg.inner_text('#v-data')).lower(), 'the Data tab has no offline-copy button')
+        check(await pg.inner_text('#storage') == 'Saved on device', 'the header says Saved on device')
         await b.close()
 run(main)

@@ -1,13 +1,4 @@
 'use strict';
-// Snapshot of the page as delivered, for "Save offline copy" (taken before anything renders).
-// Snapshot of the page for "Download app as HTML file". Anything the hosting viewer injected
-// (security-policy meta tags, its runtime scripts) is removed so the copy can reach the API.
-const SELF_HTML = (() => {
-  const c = document.documentElement.cloneNode(true);
-  c.querySelectorAll('script:not([data-rt]), meta[http-equiv], base, iframe, object, embed, link').forEach(n => n.remove());
-  return '<!DOCTYPE html>\n' + c.outerHTML;
-})();
-
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtVM = v => v == null ? '' : v.toFixed(2);
@@ -44,75 +35,18 @@ const R = () => store.rallies[store.cur] || null;
 const fmtOCF = Core.fmtOCF;   // OCF is always shown with four decimals
 
 function save(rally) {
-  if (rally) { rally.updated = now(); Cloud.queue(rally.id); }
+  if (rally) rally.updated = now();
   try { localStorage.setItem(LS_KEY, JSON.stringify(store)); lsOK = true; }
   catch (e) { lsOK = false; }
   renderStorageWarn();
 }
 function renderStorageWarn() {
+  renderStorage();
   $('storageWarn').innerHTML = lsOK ? '' :
     '<div class="banner">This browser is not letting the page save on the device. Your data lasts only while the page stays open. Use Data → Export before closing.</div>';
 }
 
-// ---------------------------------------------------------------- Claude capabilities (all optional)
-const caps = { sample: null, db: null, user: null, downloads: null };
-const hasClaude = typeof window.claude === 'object' && window.claude && typeof window.claude.use === 'function';
-async function useCap(name) { if (!hasClaude) return null; try { return await window.claude.use(name); } catch (e) { return null; } }
-
-// Cloud copy: one private document per rally under data/users/<id>/.
-const Cloud = {
-  col: null, state: 'off', last: null, pending: new Set(), busy: false, timer: null,
-  async init() {
-    caps.db = await useCap('db'); caps.user = await useCap('user');
-    if (!caps.db || !caps.user) { this.set('off'); return; }
-    let uid = null; try { uid = await caps.user.id(); } catch (e) {}
-    if (!uid) { this.set('off'); return; }
-    try { this.col = caps.db.collection('data/users/' + uid); } catch (e) { this.set('off'); return; }
-    this.set('sync');
-    try {
-      const snap = await Promise.race([this.col.get(), new Promise((_, rj) => setTimeout(() => rj({ code: 'timeout' }), 10000))]);
-      let pulled = 0;
-      for (const d of snap.docs) {
-        const v = d.data(); if (!v || !v.rally || !v.rally.id) continue;
-        const loc = store.rallies[v.rally.id];
-        // snapshot data is frozen: keep a mutable deep copy
-        if (!loc || (v.rally.updated || 0) > (loc.updated || 0)) { const cp = JSON.parse(JSON.stringify(v.rally)); if (typeof cp.vehicle !== 'string') cp.vehicle = ''; store.rallies[cp.id] = cp; pulled++; }
-        else if ((loc.updated || 0) > (v.rally.updated || 0)) this.pending.add(loc.id);
-      }
-      for (const id of Object.keys(store.rallies)) if (!snap.docs.some(d => d.id === id)) this.pending.add(id);
-      try { localStorage.setItem(LS_KEY, JSON.stringify(store)); } catch (e) {}
-      if (pulled) { toast(`Loaded ${pulled} rall${pulled > 1 ? 'ies' : 'y'} from your account.`); renderAll(); }
-      this.set('ok'); this.flushSoon(500);
-    } catch (e) { this.set(e && e.code === 'timeout' ? 'offline' : 'off'); }
-  },
-  set(s) { this.state = s; renderCloud(); },
-  queue(id) { if (!this.col) return; this.pending.add(id); this.flushSoon(2500); },
-  flushSoon(ms) { clearTimeout(this.timer); this.timer = setTimeout(() => this.flush(), ms); },
-  async flush() {
-    if (!this.col || this.busy || !this.pending.size) return;
-    this.busy = true; this.set('sync');
-    try {
-      for (const id of [...this.pending]) {
-        this.pending.delete(id);
-        const r = store.rallies[id];
-        try {
-          if (r) await this.col.doc(id).set({ rally: r, updated: r.updated, name: r.name || '', date: r.date || '' });
-          else await this.col.doc(id).delete();
-        } catch (e) {
-          this.pending.add(id);
-          if (e && (e.code === 'revoked' || e.code === 'not_granted' || e.code === 'invalid_argument')) { this.col = null; this.set('off'); return; }
-          throw e;
-        }
-      }
-      this.last = now(); this.set('ok');
-    } catch (e) { this.set('offline'); this.flushSoon(30000); }
-    finally { this.busy = false; if (this.pending.size && this.col) this.flushSoon(3000); }
-  },
-};
-function renderCloud() {
-  const m = { off: 'Saved on device', sync: 'Saving to account…', ok: 'Saved on device + account', offline: 'Saved on device (account copy waiting)' };
-  $('cloud').textContent = lsOK ? m[Cloud.state] : 'Not saved!';
-}
+function renderStorage() { $('storage').textContent = lsOK ? 'Saved on device' : 'Not saved!'; }
 
 // ---------------------------------------------------------------- UI helpers
 function toast(msg, ms = 2600) { const t = $('toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('on'), ms); }
@@ -152,7 +86,7 @@ function renderView() {
   renderHeader();
   ({ rallies: renderRallies, setup: renderSetup, route: renderRoute, run: renderRun, data: renderData }[view])();
 }
-function renderAll() { applyTheme(); renderCloud(); renderStorageWarn(); renderView(); }
+function renderAll() { applyTheme(); renderStorageWarn(); renderView(); }
 
 // screen wake lock while on Run (ignored where not allowed)
 let wl = null;
@@ -168,7 +102,7 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 // ---------------------------------------------------------------- install (home-screen web app)
 const isInstalled = () => { try { return matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: fullscreen)').matches || navigator.standalone === true; } catch (e) { return false; } };
 const isIOS = () => /iPad|iPhone|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
-const canInstall = () => !hasClaude && /^https:$/.test(location.protocol) && !isInstalled();
+const canInstall = () => /^https:$/.test(location.protocol) && !isInstalled();
 let installEvt = null;                                   // Android/Chrome install prompt, when offered
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; if (view === 'rallies') renderRallies(); });
 window.addEventListener('appinstalled', () => { installEvt = null; if (view === 'rallies') renderRallies(); });
@@ -302,18 +236,17 @@ function renderRoute() {
   const r = R(), C = Core.compute(r);
   const pages = pagesOf(r.id), newSet = newOf(r.id);
   const flags = routeFlags(r, C);
-  const canOCR = !!caps.sample || !!getApiKey();
+  const canOCR = !!getApiKey();
   $('routeBody').innerHTML = `
   <div class="card narrow" style="max-width:none">
     <h2>Read Route Instruction pages</h2>
-    <div class="small muted">${caps.sample ? 'Claude reads each photo (internet required). The first time, Claude asks your permission.'
-      : getApiKey() ? 'Photos are sent to the Anthropic API with the key saved on this device. Internet is needed only for reading.'
+    <div class="small muted">${getApiKey() ? 'Photos are sent to the Anthropic API with the key saved on this device. Internet is needed only for reading.'
       : 'To read photos, enter your Anthropic API key below (kept only on this device).'}</div>
-    ${caps.sample ? '' : `<div class="reader">
+    <div class="reader">
       <div><label for="fKey">Anthropic API key</label><input id="fKey" type="password" autocomplete="off" placeholder="${getApiKey() ? '•••••••• saved — type to replace' : 'sk-ant-…'}"></div>
       <button id="bKey">${getApiKey() ? 'Replace' : 'Save'}</button>
       <div style="grid-column:1/-1"><label for="fModel">Model for reading</label><select id="fModel">${MODELS.map(m => `<option value="${m.id}" ${store.prefs.model === m.id ? 'selected' : ''}>${m.label}</option>`).join('')}</select></div>
-    </div>`}
+    </div>
     <div class="row" style="margin-top:8px">
       <span class="filebtn primary">Add page photos<input type="file" id="fPages" accept="image/*" multiple aria-label="Add page photos"></span>
       <button id="btnRead" ${pages.some(p => p.state !== 'ok') ? '' : 'disabled'}>Read ${pages.filter(p => p.state !== 'ok').length || ''} page(s)</button>
@@ -452,10 +385,6 @@ async function prepImage(file) {
 const blobToB64 = b => new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(',')[1]); fr.onerror = rej; fr.readAsDataURL(b); });
 
 async function ocrOne(blob, model) {
-  if (caps.sample) {
-    const out = await caps.sample(OCR_PROMPT, { images: [blob], modelTier: 'complex', cache: false });
-    return Core.parseOCR(out.text);
-  }
   const key = getApiKey(); if (!key) throw new Error('No photo reader available');
   let resp;
   try { resp = await fetch('https://api.anthropic.com/v1/messages', {
@@ -483,18 +412,17 @@ async function readPages(only, model) {
   const redraw = () => { if (store.cur === rid && store.rallies[rid]) renderRoute(); };
   for (const [p, i] of targets) {
     if (!store.rallies[rid]) break;       // rally deleted while reading: discard
-    p.state = 'busy'; p.msg = caps.sample ? 'Reading…' : `Reading (${modelName(model)})…`; redraw();
+    p.state = 'busy'; p.msg = `Reading (${modelName(model)})…`; redraw();
     try {
       const rows = await ocrOne(await prepImage(p.file), model);
       if (!store.rallies[rid]) break;
-      p.model = caps.sample ? null : model;
-      const by = caps.sample ? '' : ` · ${modelName(model)}`;
+      p.model = model;
+      const by = ` · ${modelName(model)}`;
       if (!rows.length) { p.state = 'bad'; p.msg = 'No Route Instructions found' + by; }
       else { const s = mergeIntoRally(rows, `Page ${i + 1}${by}`, rid); p.state = 'ok'; p.msg = `${rows.length} Route Instructions${by}`; msgs.push(s); }
     } catch (e) {
-      p.state = 'bad'; p.msg = e && e.code === 'not_granted' ? 'Not allowed' : 'Failed';
-      msgs.push(`Page ${i + 1}: ${e && (e.message || e.code) || 'failed'}`);
-      if (e && (e.code === 'not_granted' || e.code === 'rate_limited')) break;
+      p.state = 'bad'; p.msg = 'Failed';
+      msgs.push(`Page ${i + 1}: ${e && e.message || 'failed'}`);
     }
     redraw();
   }
@@ -712,17 +640,9 @@ function scrollActive(behavior = 'smooth') {
 // ---------------------------------------------------------------- DATA
 function getApiKey() { try { return localStorage.getItem(LS_KEY_API) || ''; } catch (e) { return ''; } }
 const fileBase = r => ((r.date || '') + ' ' + (r.name || 'rally')).trim().replace(/[^\w.-]+/g, '_');
-async function offerFile(filename, data, mime) {
-  if (!caps.downloads) caps.downloads = await useCap('downloads');
-  if (caps.downloads) {
-    try { await caps.downloads.save({ filename, data }); return; }
-    catch (e) { if (e && e.code && !/unavail|not_granted|disabled|removed/.test(e.code)) { toast('Download not saved'); return; } }
-  }
-  if (!hasClaude) {
-    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([data], { type: mime })); a.download = filename;
-    document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000); return;
-  }
-  toast('Downloads are not available here. Use Copy instead.');
+function offerFile(filename, data, mime) {
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([data], { type: mime })); a.download = filename;
+  document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
 }
 async function copyText(t, what) {
   try { await navigator.clipboard.writeText(t); toast(what + ' copied'); }
@@ -736,7 +656,7 @@ function renderData() {
   <div class="card"><h2>${esc(r.name || 'Untitled rally')}</h2>
     <div class="small">${esc(r.date)} · Car ${esc(r.cn)} · Class ${esc(r.cls || '—')} · OCF ${esc(fmtOCF(r.ocf))} · Driver ${esc(r.crew.driver || '—')} · Navigator ${esc(r.crew.navigator || '—')}${r.crew.passengers.filter(Boolean).length ? ' · Passengers ' + esc(r.crew.passengers.filter(Boolean).join(', ')) : ''}</div>
     <div class="small muted" style="margin-top:4px">${r.rows.length} Route Instructions · ${done} complete · TAs entered: ${tas.length ? tas.map(t => `RI ${esc(t.ri)} ${fmtTA(t.ta)}`).join(', ') : 'none'}</div>
-    <div class="small muted" style="margin-top:4px">Storage: ${lsOK ? 'saved on this device' : 'NOT saved on this device'}${Cloud.col ? `; private copy in your Claude account${Cloud.last ? ' (last saved ' + new Date(Cloud.last).toLocaleTimeString() + ')' : ''}` : ''}.</div>
+    <div class="small muted" style="margin-top:4px">Storage: ${lsOK ? 'saved on this device' : 'NOT saved on this device'}.</div>
   </div>
   <div class="card"><h3>Export</h3>
     <div class="row"><button id="xCSV">Download CSV</button><button id="xJSON">Download JSON</button>
@@ -747,13 +667,9 @@ function renderData() {
     <span class="filebtn">Import rally JSON<input type="file" id="fImport" accept=".json,application/json,text/plain" aria-label="Import rally JSON"></span>
     <div class="small muted" style="margin-top:6px">Adds the rally as a new entry; nothing existing is overwritten.</div>
   </div>
-  <div class="card"><h3>Offline copy</h3>
-    <div class="row"><button id="xApp">Download app as HTML file</button></div>
-    <div class="small muted" style="margin-top:6px">${hasClaude
-      ? 'Inside Claude, open this page before you lose signal and keep it open; it needs no internet once loaded.'
-      : isInstalled() ? 'Installed: this app opens and runs with no internet.' : 'Install this app to your home screen (see the Rallies tab) so it opens with no internet.'}
-      The HTML file is a single-file copy for another browser; its saved rallies stay in that browser.</div>
-    ${!caps.sample && getApiKey() ? `<div class="row" style="margin-top:8px"><button id="bKeyDel" class="danger">Remove saved API key from this device</button></div>` : ''}
+  <div class="card"><h3>App</h3>
+    <div class="small muted">${isInstalled() ? 'Installed: this app opens and runs with no internet.' : 'Install this app to your home screen (see the Rallies tab) so it opens with no internet.'}</div>
+    ${getApiKey() ? `<div class="row" style="margin-top:8px"><button id="bKeyDel" class="danger">Remove saved API key from this device</button></div>` : ''}
     <div class="small muted" style="margin-top:8px">App version ${esc(APP_VERSION)}</div>
   </div>
   <div class="card"><h3>Reset or delete</h3>
@@ -766,7 +682,6 @@ function renderData() {
   $('xJSON').onclick = () => offerFile(fileBase(r) + '.json', json(), 'application/json');
   $('cCSV').onclick = () => copyText(csv(), 'CSV');
   $('cJSON').onclick = () => copyText(json(), 'JSON');
-  $('xApp').onclick = () => offerFile('rally-route-instructions.html', SELF_HTML, 'text/html');
   $('fImport').onchange = async e => {
     const f = e.target.files[0]; e.target.value = ''; if (!f) return;
     try {
@@ -787,8 +702,8 @@ function renderData() {
     const nr = JSON.parse(JSON.stringify(r)); nr.id = newId(); nr.name = (r.name || 'Rally') + ' (copy)'; nr.created = nr.updated = now();
     store.rallies[nr.id] = nr; store.cur = nr.id; save(nr); toast('Duplicated'); renderAll();
   };
-  $('bDel').onclick = () => confirmBox('Delete rally', `Delete “${esc(r.name || 'Untitled rally')}” and all its data from this device${Cloud.col ? ' and your Claude account' : ''}? This cannot be undone. Export it first if you want a record.`, 'Delete', () => {
-    delete store.rallies[r.id]; delete runPos[r.id]; dropPages(r.id); delete newByRally[r.id]; store.cur = null; Cloud.queue(r.id); save(); show('rallies');
+  $('bDel').onclick = () => confirmBox('Delete rally', `Delete “${esc(r.name || 'Untitled rally')}” and all its data from this device? This cannot be undone. Export it first if you want a record.`, 'Delete', () => {
+    delete store.rallies[r.id]; delete runPos[r.id]; dropPages(r.id); delete newByRally[r.id]; store.cur = null; save(); show('rallies');
   });
 }
 
@@ -798,12 +713,12 @@ applyTheme();
   const h = (location.hash || '').slice(1);
   if (store.cur && !store.rallies[store.cur]) store.cur = null;
   show(['setup', 'route', 'run', 'data'].includes(h) && R() ? h : (R() && R().rows.length ? 'run' : 'rallies'));
-  renderCloud(); renderStorageWarn();
+  renderStorageWarn();
 })();
 window.addEventListener('hashchange', () => { const h = location.hash.slice(1); if (h && h !== view && ['rallies', 'setup', 'route', 'run', 'data'].includes(h)) show(h); });
 // ---------------------------------------------------------------- offline cache (hosted app only)
 (function registerSW() {
-  if (hasClaude || !('serviceWorker' in navigator) || !/^https:$|^http:$/.test(location.protocol)) return;
+  if (!('serviceWorker' in navigator) || !/^https:$|^http:$/.test(location.protocol)) return;
   if (location.protocol === 'http:' && !/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) return;
   // Reload only when the user asked for the new version (a first install also changes the controller).
   let wantReload = false;
@@ -821,13 +736,6 @@ window.addEventListener('hashchange', () => { const h = location.hash.slice(1); 
     // look for a new version when the app comes back to the foreground (never forces a reload)
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => {}); });
   }).catch(() => {});
-})();
-
-(async () => {
-  caps.sample = await useCap('sample');
-  if (caps.sample) { try { const lim = await caps.sample.limits(); if (!lim || !lim.images) caps.sample = null; } catch (e) {} }
-  if (view === 'route' || view === 'data') renderView();
-  Cloud.init();
 })();
 
 confirmBox.gen = 0;
