@@ -148,6 +148,24 @@ assert.strictEqual(Core.activeIndex(R), 2);
 assert.strictEqual(R.rows[2].ttDone, null);
 assert.strictEqual(R.rows[0].ttDone, R.rows[0].czt + 12 * 60, 'TT recorded at completion');
 
+// Undo picks by RI order, never by completion time (#40): the first row of a leg carries the LATEST doneAt
+{ const Ru = base(), lo = 0, hi = Ru.rows.findIndex((r, i) => i > 0 && r.restart) - 1;   // first and last rows of leg 1
+  assert.ok(hi > lo, 'leg 1 has more than one row');
+  for (let k = lo; k <= hi; k++) Ru.rows[k] = { ...Ru.rows[k], done: true, ttDone: null, doneAt: 1000 + k };
+  Ru.rows[lo].doneAt = 9999;                                       // earliest RI, most recent completion
+  assert.strictEqual(Core.lastCompleted(Ru), hi, 'Undo selects the last completed RI in RI order');
+  const before = JSON.stringify(Core.compute(Ru));
+  Ru.rows = Ru.rows.map(r => ({ ...r, doneAt: null }));            // completion times feed nothing
+  assert.strictEqual(JSON.stringify(Core.compute(Ru)), before, 'no logged time feeds compute');
+  assert.strictEqual(Core.lastCompleted(Ru), hi);
+  Ru.rows = Core.uncomplete(Ru, Core.lastCompleted(Ru));
+  assert.strictEqual(Core.lastCompleted(Ru), hi - 1, 'the next Undo selects the previous RI in RI order');
+  assert.strictEqual(Core.activeIndex(Ru), hi, 'the un-completed RI becomes active when it is the first uncompleted'); }
+// RI order, not array order, when the rows have been left unsorted
+{ const Ru = base(); Ru.rows = [Ru.rows[3], Ru.rows[1], Ru.rows[2]].map(r => ({ ...r, done: true }));
+  assert.strictEqual(Core.lastCompleted(Ru), 0, 'unsorted rows: the highest RI is last'); }
+assert.strictEqual(Core.lastCompleted({ rows: [] }), -1, 'nothing complete -> -1');
+
 // rule 1: the first row need not be a restart; it starts leg 1 and keeps the printed-frame VM
 { const Rm = { cn: 0, ocf: 1, speedo: 60, taEvents: [], rows: Core.mergeRows([], [
     { ri: 5, om: 3, czt: '10:00:00' }, { ri: 6, om: 4 }, { ri: 7, om: '2.00/0.00', czt: '10:30:00' }, { ri: 8, om: 2.5 }]).rows };

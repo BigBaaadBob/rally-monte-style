@@ -88,6 +88,18 @@ async def main():
         check(await sc() == before, f'Undo keeps the scroll position ({before})')
         await pg.click('#btnDone')
 
+        # #40: tapping a ✓ does nothing; Undo picks the last completed RI in RI order, not the latest completion time.
+        nd = await pg.evaluate('R().rows.filter(x => x.done).length')
+        await pg.click('#runTbl tr.done td.chk span', force=True); await pg.wait_for_timeout(200)
+        check(not await pg.evaluate("$('modal').classList.contains('on')"), 'tapping a ✓ opens no dialog')
+        check(await pg.evaluate('R().rows.filter(x => x.done).length') == nd, 'tapping a ✓ leaves the row complete')
+        await pg.evaluate("(() => { const r = R(); r.rows[0].doneAt = Date.now() + 1e9; save(r); })()")      # first RI now has the latest time
+        want = await pg.evaluate("(() => { const r = R(); let k = -1; r.rows.forEach((x, i) => { if (x.done && (k < 0 || Core.cmpRI(x.ri, r.rows[k].ri) >= 0)) k = i; }); return k; })()")
+        await pg.click('#btnUndo'); await pg.wait_for_timeout(300)
+        check(await pg.evaluate('R().rows.filter(x => x.done).length') == nd - 1 and not await pg.evaluate(f'R().rows[{want}].done') and await pg.evaluate('R().rows[0].done'),
+              f'Undo un-completes the last RI in RI order (row {want}), not the one completed most recently')
+        await pg.click('#btnDone')
+
         # DESIGN l.18: a completed row keeps its locked estimate when the speedometer changes; an open row's estimate follows it.
         pick = await pg.evaluate(PICK_EST)
         check(pick['lockedIdx'] >= 0 and pick['openIdx'] >= 0, f'found a completed no-CZT row and an open no-CZT row whose estimate moves ({pick})')

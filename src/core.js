@@ -220,13 +220,12 @@
   function uncomplete(rally, idx) {
     return rally.rows.map((r, i) => i === idx ? { ...r, done: false, ttDone: null, doneAt: null, estLock: null, estLockBy: null } : r);
   }
-  // Index of the most recently completed row (by doneAt; ties/absent -> highest index).
+  // Index of the completed row that comes last in RI order (never by completion time; ties -> highest index).
   function lastCompleted(rally) {
-    let best = -1, bestT = -Infinity;
+    let best = -1;
     (rally.rows || []).forEach((r, i) => {
       if (!r.done) return;
-      const t = r.doneAt ?? -1;
-      if (t > bestT || (t === bestT && i > best)) { best = i; bestT = t; }
+      if (best < 0 || cmpRI(r.ri, rally.rows[best].ri) >= 0) best = i;
     });
     return best;
   }
