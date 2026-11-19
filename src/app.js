@@ -279,8 +279,14 @@ function renderSetup() {
 }
 
 // ---------------------------------------------------------------- ROUTE (prep)
-let newSet = new Set();         // RI numbers touched by the last import (highlighted)
-let pages = [];                 // {file, url, state:'' | 'busy' | 'ok' | 'bad', msg}
+// Per rally, in memory only (DESIGN § Reading pages → Page photos).
+const newByRally = {};          // rally id -> Set of RI numbers touched by the last import (highlighted)
+const pagesByRally = {};        // rally id -> [{file, url, state:'' | 'busy' | 'ok' | 'bad', msg}]
+const readingBy = new Set();    // ids of rallies with a read running
+const newOf = id => newByRally[id] || (newByRally[id] = new Set());
+const pagesOf = id => pagesByRally[id] || (pagesByRally[id] = []);
+function dropPages(id) { (pagesByRally[id] || []).forEach(p => URL.revokeObjectURL(p.url)); delete pagesByRally[id]; }
+function addPhotos(id, files) { for (const f of files) pagesOf(id).push({ file: f, url: URL.createObjectURL(f), state: '', msg: '' }); }
 const OCR_PROMPT = `You are reading ONE photographed page of SCCA RoadRally (TDS, Monte Carlo style) Route Instructions. The page holds a table of numbered Route Instructions; each one is an RI.
 Return ONLY a JSON array, no prose and no code fence. One object per RI row, in page order:
 {"ri": RI number as printed (number, or string like "12A"),
@@ -294,6 +300,7 @@ Include every row, including rows with no CZT. Never invent or infer values: use
 
 function renderRoute() {
   const r = R(), C = Core.compute(r);
+  const pages = pagesOf(r.id), newSet = newOf(r.id);
   const flags = routeFlags(r, C);
   const canOCR = !!caps.sample || !!getApiKey();
   $('routeBody').innerHTML = `
@@ -313,7 +320,8 @@ function renderRoute() {
       ${pages.length ? '<button id="btnClearPages">Clear photos</button>' : ''}
     </div>
     <div class="thumbs">${pages.map((p, i) => `<figure class="${p.state}"><img src="${p.url}" alt="page ${i + 1}"><figcaption>${esc(p.msg || p.file.name)}</figcaption>
-      ${(p.state === 'ok' || p.state === 'bad') && canOCR ? `<button data-reread="${i}" title="Read this page again with the selected model">Re-read</button>` : ''}</figure>`).join('')}</div>
+      ${(p.state === 'ok' || p.state === 'bad') && canOCR ? `<button data-reread="${i}" title="Read this page again with the selected model">Re-read</button>` : ''}
+      <button class="x" data-rmphoto="${i}" title="Remove this photo" aria-label="Remove photo ${i + 1}">✕</button></figure>`).join('')}</div>
   </div>
   <div class="row" style="margin-bottom:8px">
     <strong>${r.rows.length} Route Instructions</strong>
@@ -337,10 +345,21 @@ function renderRoute() {
   <p class="small muted">OM is the official mileage; a checked Rst box means the OM column shows “/0.00” (odometer restarts at that RI). Times may be typed as HH:MM:SS or HH:MM.cc. When the Route Instructions are right, go to Run.</p>`;
 
   $('fPages').onchange = e => {
-    for (const f of e.target.files) pages.push({ file: f, url: URL.createObjectURL(f), state: '', msg: '' });
+    addPhotos(r.id, e.target.files);
     e.target.value = ''; renderRoute();
   };
-  if ($('btnClearPages')) $('btnClearPages').onclick = () => { pages.forEach(p => URL.revokeObjectURL(p.url)); pages = []; renderRoute(); };
+  if ($('btnClearPages')) $('btnClearPages').onclick = () => confirmBox('Clear photos', (pages.length === 1
+    ? `Clear the 1 page photo from “${esc(r.name || 'this rally')}”? Route Instructions already read from it stay.`
+    : `Clear all ${pages.length} page photos from “${esc(r.name || 'this rally')}”? Route Instructions already read from them stay.`), 'Clear', () => {
+    dropPages(r.id); renderRoute();
+  });
+  document.querySelectorAll('#routeBody [data-rmphoto]').forEach(b => b.onclick = () => {
+    const p = pages[+b.dataset.rmphoto];
+    confirmBox('Remove photo', 'Remove this page photo? Route Instructions already read from it stay.', 'Remove', () => {
+      const k = pages.indexOf(p); if (k < 0) return;
+      URL.revokeObjectURL(p.url); pages.splice(k, 1); renderRoute();
+    });
+  });
   if ($('btnRead')) $('btnRead').onclick = () => canOCR ? readPages() : confirmBox('No photo reader here',
     `Reading photos needs your Anthropic API key: enter it in the box above. It stays on this device.`,
     'OK', null, '');
@@ -364,7 +383,7 @@ function renderRoute() {
   $('btnClearRI').onclick = () => confirmBox('Clear Route Instructions', (r.rows.length === 1
     ? `Clear the 1 Route Instruction and its run data from “${esc(r.name || 'this rally')}”? This cannot be undone.`
     : `Clear all ${r.rows.length} Route Instructions and their run data from “${esc(r.name || 'this rally')}”? This cannot be undone.`), 'Clear', () => {
-    r.rows = []; r.taEvents = []; newSet.clear(); save(r); renderRoute();
+    r.rows = []; r.taEvents = []; newOf(r.id).clear(); save(r); renderRoute();
   });
   $('btnPaste').onclick = pasteRows;
   const tb = document.querySelector('#rtEdit tbody');
@@ -383,7 +402,7 @@ function renderRoute() {
       row.ri = res.ri; r.taEvents = res.taEvents; }
     else if (k === 'cp') row.cp = el.value.trim() || null;
     else row[k] = el.value;
-    newSet.delete(String(row.ri));
+    newOf(r.id).delete(String(row.ri));
     save(r); renderRoute();
   });
   tb.querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
@@ -409,11 +428,13 @@ function routeFlags(r, C) {
   return f;
 }
 
-function mergeIntoRally(rows, label) {
-  const r = R();
+// Merges into the rally with id rid (default: the open one); null when that rally no longer exists.
+function mergeIntoRally(rows, label, rid) {
+  const r = store.rallies[rid || store.cur];
+  if (!r) return null;
   const m = Core.mergeRows(r.rows, rows);
   r.rows = m.rows;
-  rows.forEach(x => { const n = Core.normRow(x); if (n.ri != null) newSet.add(String(n.ri)); });
+  rows.forEach(x => { const n = Core.normRow(x); if (n.ri != null) newOf(r.id).add(String(n.ri)); });
   save(r);
   return `${label}: ${m.added} added, ${m.replaced} replaced`;
 }
@@ -450,32 +471,36 @@ async function ocrOne(blob, model) {
   return Core.parseOCR((j.content || []).filter(c => c.type === 'text').map(c => c.text).join(''));
 }
 
-let reading = false;
 const modelName = id => ({ 'claude-sonnet-5-5': 'Sonnet', 'claude-haiku-5-5': 'Haiku', 'claude-opus-5-5': 'Opus' }[id] || id);
-// Read the given pages (default: every page not yet read) with the chosen model.
+// Read the given pages (default: every page not yet read) of the open rally with the chosen model.
+// The owning rally is fixed when the read starts; rows merge into it even if another rally is open later.
 async function readPages(only, model) {
-  if (reading) return; reading = true; newSet.clear();
+  const rid = store.cur;
+  if (!rid || readingBy.has(rid)) return; readingBy.add(rid); newOf(rid).clear();
   model = model || store.prefs.model || MODELS[0].id;
-  const msgs = [];
-  for (let i = 0; i < pages.length; i++) {
-    const p = pages[i];
-    if (only ? !only.includes(i) : p.state === 'ok') continue;
-    p.state = 'busy'; p.msg = caps.sample ? 'Reading…' : `Reading (${modelName(model)})…`; renderRoute();
+  const list = pagesOf(rid), msgs = [];
+  const targets = list.map((p, i) => [p, i]).filter(([p, i]) => only ? only.includes(i) : p.state !== 'ok');
+  const redraw = () => { if (store.cur === rid && store.rallies[rid]) renderRoute(); };
+  for (const [p, i] of targets) {
+    if (!store.rallies[rid]) break;       // rally deleted while reading: discard
+    p.state = 'busy'; p.msg = caps.sample ? 'Reading…' : `Reading (${modelName(model)})…`; redraw();
     try {
       const rows = await ocrOne(await prepImage(p.file), model);
+      if (!store.rallies[rid]) break;
       p.model = caps.sample ? null : model;
       const by = caps.sample ? '' : ` · ${modelName(model)}`;
       if (!rows.length) { p.state = 'bad'; p.msg = 'No Route Instructions found' + by; }
-      else { const s = mergeIntoRally(rows, `Page ${i + 1}${by}`); p.state = 'ok'; p.msg = `${rows.length} Route Instructions${by}`; msgs.push(s); }
+      else { const s = mergeIntoRally(rows, `Page ${i + 1}${by}`, rid); p.state = 'ok'; p.msg = `${rows.length} Route Instructions${by}`; msgs.push(s); }
     } catch (e) {
       p.state = 'bad'; p.msg = e && e.code === 'not_granted' ? 'Not allowed' : 'Failed';
       msgs.push(`Page ${i + 1}: ${e && (e.message || e.code) || 'failed'}`);
       if (e && (e.code === 'not_granted' || e.code === 'rate_limited')) break;
     }
-    renderRoute();
+    redraw();
   }
-  reading = false; renderRoute();
-  if (msgs.length) confirmBox('Pages read', msgs.map(esc).join('<br>') + '<br><br>Rows are merged by RI and sorted. Highlighted rows need checking.', 'OK', null, '');
+  readingBy.delete(rid); redraw();
+  const owner = store.rallies[rid];
+  if (owner && msgs.length) confirmBox('Pages read', (store.cur === rid ? '' : `“${esc(owner.name || 'Untitled rally')}”:<br>`) + msgs.map(esc).join('<br>') + '<br><br>Rows are merged by RI and sorted. Highlighted rows need checking.', 'OK', null, '');
 }
 
 // A copied photo can be pasted on the Route tab (Ctrl/Cmd-V, or long-press → Paste where the device allows).
@@ -484,7 +509,7 @@ document.addEventListener('paste', e => {
   const files = [...(e.clipboardData && e.clipboardData.files || [])].filter(f => /^image\//.test(f.type));
   if (!files.length) return;
   e.preventDefault();
-  for (const f of files) pages.push({ file: f, url: URL.createObjectURL(f), state: '', msg: '' });
+  addPhotos(store.cur, files);
   toast(`${files.length} pasted photo(s) added`); renderRoute();
 });
 
@@ -763,7 +788,7 @@ function renderData() {
     store.rallies[nr.id] = nr; store.cur = nr.id; save(nr); toast('Duplicated'); renderAll();
   };
   $('bDel').onclick = () => confirmBox('Delete rally', `Delete “${esc(r.name || 'Untitled rally')}” and all its data from this device${Cloud.col ? ' and your Claude account' : ''}? This cannot be undone. Export it first if you want a record.`, 'Delete', () => {
-    delete store.rallies[r.id]; delete runPos[r.id]; store.cur = null; Cloud.queue(r.id); save(); show('rallies');
+    delete store.rallies[r.id]; delete runPos[r.id]; dropPages(r.id); delete newByRally[r.id]; store.cur = null; Cloud.queue(r.id); save(); show('rallies');
   });
 }
 

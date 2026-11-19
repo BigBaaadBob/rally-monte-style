@@ -30,14 +30,15 @@ Moved from the claude.ai "Road Rally" Project. The app was first delivered as a 
 - Add row gives the new row the next RI (last + 1, or last + "+" for a text RI) and copies the previous row's OM (0 after a restart). The first row added is "/0.00". Delete row and Clear Route Instructions each ask first.
 - Clear Route Instructions is titled "Clear Route Instructions", its OK button says "Clear", and its text is: `Clear all n Route Instructions and their run data from “<rally name>”? This cannot be undone.` With exactly one row it reads `Clear the 1 Route Instruction and its run data from “<rally name>”? This cannot be undone.` The rally name falls back to "this rally". It removes the rows, all Time Allowances, and the last-read highlight; completion marks and estimate locks go with the rows. The text says nothing about page photos, and the action leaves them in place. The button is disabled when the rally has no Route Instructions, and is enabled again once a row is added, pasted, or read.
 - Dialog wording avoids contractions (for example "cannot", not "can't").
+- Page photos (add, remove, Clear photos) are per rally and session-only; see Reading pages → Page photos.
 - Flags above the table: an RI with no OM, an OM less than the RI before it (missed restart?), a CZT earlier than the previous CZT, and rows out of order. The first 8 are listed, then "…and n more". Rows from the last read are highlighted.
 
 **Data**
 - "Run data" means completion marks, Time Allowances, and estimate locks.
 - Clear run data, Delete rally, and Remove saved API key each ask first.
 - Clear run data is titled "Clear run data", its OK button says "Clear", and its text is: `Clear the run data for “<rally name>”? The Route Instructions stay. This cannot be undone.` The rally name falls back to "this rally".
-- Delete rally is titled "Delete rally", its OK button says "Delete", and its text is: `Delete “<rally name>” and all its data from this device[ and your Claude account]? This cannot be undone. Export it first if you want a record.` The bracketed phrase appears only inside Claude (when the account copy exists), and that copy is deleted too. The rally name falls back to "Untitled rally".
-- Duplicate rally adds " (copy)" to the name and makes the copy current.
+- Delete rally is titled "Delete rally", its OK button says "Delete", and its text is: `Delete “<rally name>” and all its data from this device[ and your Claude account]? This cannot be undone. Export it first if you want a record.` The bracketed phrase appears only inside Claude (when the account copy exists), and that copy is deleted too. It also drops the rally's page photos. Rows returned by a read of that rally that is still running are discarded, with no message. The rally name falls back to "Untitled rally".
+- Duplicate rally adds " (copy)" to the name and makes the copy current. The copy starts with no page photos.
 
 **Dialogs**
 - Tapping outside a dialog closes it without change. Esc closes no dialog; it only cancels a speedometer edit.
@@ -97,7 +98,7 @@ Moved from the claude.ai "Road Rally" Project. The app was first delivered as a 
 ## Testing
 - The core is pure (no DOM, no clock) and is unit-tested under Node.
 - Playwright runs at 390 and 360 px portrait and 844 px landscape. These are the supported layouts.
-- A mock of the Claude runtime (frozen db snapshots plus a sample reader) covers the account-copy and photo-merge path.
+- A mock of the Claude runtime (frozen db snapshots plus a sample reader) covers the account-copy and photo-merge path, including a rally switch while a read is running.
 - The tests use the built-in invented sample rally, "Sample Rally" (`src/sample.js`); mocks of the page reader return invented canned rows of their own.
 - The offline copy's stripping of security-policy meta tags and injected scripts is verified against a simulated injected CSP.
 
@@ -118,4 +119,13 @@ Moved from the claude.ai "Road Rally" Project. The app was first delivered as a 
 - Reader replies: the JSON array of rows is found even with prose around it and [brackets] in instruction text, and several fenced blocks are combined. A fenced block that isn't JSON is skipped, and the rows from the valid blocks are used. A reply with no valid block finds no rows.
 - Each page thumbnail shows the model that read it last (inside claude.ai there is no model label). Every page that has been read offers "Re-read", which reads that page again with the currently selected model (inside claude.ai, with Claude's reader). Each row it returns replaces the row with the same RI and other rows stay, so a row misread on an earlier read stays until it is deleted in the Route editor.
 - Errors name the cause: no network, key rejected (401), refused (402/403: credit or model access), or reply cut off.
+**Page photos**
+- Page photos belong to the rally they were added to. The Route tab shows only the open rally's photos. Opening another rally neither shows nor clears them; they are there again when that rally is reopened.
+- Photos are session-only: a reload or app restart drops them, because the Route Instructions read from them are saved. To Re-read after a reload, add the photos again.
+- Each thumbnail has a ✕ that removes only that photo, after a confirm. The dialog is titled "Remove photo", its OK button says "Remove", and its text is: `Remove this page photo? Route Instructions already read from it stay.`
+- Clear photos is titled "Clear photos", its OK button says "Clear", and its text is: `Clear all n page photos from “<rally name>”? Route Instructions already read from them stay.` With exactly one photo it reads `Clear the 1 page photo from “<rally name>”? Route Instructions already read from it stay.` The rally name falls back to "this rally". The button appears only when the open rally has photos.
+- Neither ✕ nor Clear photos changes Route Instructions, Time Allowances, completion marks, or the last-read highlight.
+- Delete rally drops the rally's photos. Removing a photo, Clear photos, and Delete rally free the photos' object URLs.
+- Read and Re-read record the owning rally when they start. The rows they return merge by RI into that rally, and that rally's last-read highlight is updated, even if another rally is open when the read finishes; the open rally is untouched. The last-read highlight and the reading state are kept per rally, so reads on different rallies can run at the same time.
+- When a read finishes while another rally is open, the "Pages read" summary names the owning rally (`“<rally name>”: …`); when the owning rally is open the text is unchanged.
 - Open item: run a full 18-page rally through all three models once and compare against the paper.

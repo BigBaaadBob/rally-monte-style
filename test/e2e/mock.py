@@ -17,7 +17,8 @@ MOCK = r"""
       doc: id => ({ set: async d => { window.__writes = (window.__writes||0)+1; }, delete: async () => {} }) }) };
   const sample = Object.assign(async (input, opts) => {
       window.__sampleCalls = (window.__sampleCalls||0)+1; window.__sampleImgs = opts.images.length;
-      return { text: JSON.stringify(__READ_ROWS__) }; },
+      await new Promise(r => setTimeout(r, window.__sampleDelay || 0));
+      return { text: JSON.stringify(window.__sampleRows || __READ_ROWS__) }; },
     { limits: async () => ({ images: true }) });
   const caps = { db, user: { id: async () => 'u1' }, sample: Object.freeze(sample), downloads: null };
   window.claude = Object.freeze({ use: async n => caps[n] ?? null });
@@ -48,6 +49,25 @@ async def main():
         want = await pg.evaluate("([before, rows]) => Core.mergeRows(before, rows).rows.map(r => r.ri).join(',')", [before, READ_ROWS])
         check(await pg.evaluate("R().rows.map(r => r.ri).join(',')") == want, f'Read merges the page rows into the account copy ({want})')
         check(await pg.evaluate('window.__sampleCalls') == 1, 'one sample call for one page photo')
+        # DESIGN § Reading pages → Page photos: a read finishing after a rally switch merges into the rally that started it only.
+        rid, rname = await pg.evaluate('R().id'), await pg.evaluate("R().name || 'Untitled rally'")
+        after_read = await pg.evaluate('R().rows')
+        later = [{'ri': 500 + k, 'om': '3.00', 'czt': None, 'instr': 'late', 'info': ''} for k in range(2)]
+        await pg.evaluate("rows => { window.__sampleRows = rows; window.__sampleDelay = 800; }", later)
+        await pg.click('[data-reread="0"]')
+        await pg.click('#tabs button[data-v=rallies]'); await pg.click('#btnNew')
+        other = await pg.evaluate('R().id'); await pg.click('#tabs button[data-v=route]')
+        check(await pg.evaluate("document.querySelectorAll('.thumbs figure').length") == 0, "the other rally shows none of the first rally's photos")
+        await pg.wait_for_function('readingBy.size === 0', timeout=10000)
+        await pg.wait_for_selector('#modal.on')
+        check((await pg.inner_text('#mBody')).startswith(f'“{rname}”:'), 'the summary names the rally that started the read')
+        await pg.click('#mOk')
+        want = await pg.evaluate("([rows, add]) => Core.mergeRows(rows, add).rows.map(r => r.ri + ':' + r.instr).join('|')", [after_read, later])
+        check(await pg.evaluate("ri => store.rallies[ri].rows.map(r => r.ri + ':' + r.instr).join('|')", rid) == want, 'the late read merged into the rally that started it')
+        check(await pg.evaluate("ri => store.rallies[ri].rows.length", other) == 0 and await pg.evaluate("ri => newOf(ri).size", other) == 0, 'the other rally has no rows and no highlight')
+        await pg.evaluate("window.__sampleRows = null; window.__sampleDelay = 0")
+        await pg.click('#tabs button[data-v=rallies]'); await pg.click(f'[data-open="{rid}"]'); await pg.click('#tabs button[data-v=route]')
+        check(await pg.evaluate("document.querySelectorAll('.thumbs figure').length") == 1, 'reopening the first rally shows its photo')
         await pg.click('#tabs button[data-v=run]'); await pg.click('#btnDone')
         check(await pg.evaluate("R().rows.filter(r => r.done).length") == 1, 'Complete marks exactly one row done')
         # DESIGN § Tabs and settings (Data): inside Claude the Delete rally text names the Claude account.
