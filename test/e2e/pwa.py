@@ -61,7 +61,7 @@ async def main():
             check(await pg.evaluate("localStorage.getItem('rallyMonteStyle.apikey')") is None, 'the old API key is not carried to the new key')
             # DESIGN Hosting: caches with the old and new prefixes that are not current are deleted on update.
             await pg.evaluate("Promise.all(['route-table-old', 'rally-monte-style-old', 'unrelated-cache'].map(n => caches.open(n)))")
-            # DESIGN l.50: sw.js caches the app's own files, so the installed app opens and reloads offline.
+            # DESIGN § Hosting and install: sw.js caches the app's own files, so the installed app opens and reloads offline.
             check(await pg.evaluate('!!navigator.serviceWorker.controller'), 'the service worker controls the page')
             await pg.click('#btnNewSample')
             n_rallies = await pg.evaluate('Object.keys(store.rallies).length')
@@ -71,8 +71,8 @@ async def main():
             await ctx.set_offline(False)
             # reader settings and API reading
             await pg.click('#tabs button[data-v=route]')
-            check(await pg.input_value('#fModel') == 'claude-sonnet-5-5', 'the model picker defaults to Sonnet 5.5 (DESIGN l.58)')
-            # DESIGN l.57: only a key starting sk-ant- is saved; anything else is rejected and nothing is stored.
+            check(await pg.input_value('#fModel') == 'claude-sonnet-5-5', 'the model picker defaults to Sonnet 5.5 (DESIGN § Reading pages)')
+            # DESIGN § Reading pages: only a key starting sk-ant- is saved; anything else is rejected and nothing is stored.
             await pg.fill('#fKey', 'not-a-key'); await pg.click('#bKey')
             check(await pg.evaluate("localStorage.getItem('rallyMonteStyle.apikey')") is None, 'a malformed key is rejected and not stored')
             KEY = 'sk-ant-test-123'
@@ -94,14 +94,14 @@ async def main():
             check('Haiku' in cap and 'Sonnet' not in cap, f'the thumbnail shows the model that read the page last ({cap!r})')
             check(await pg.evaluate("R().rows.map(r => r.ri + ':' + r.instr).join('|')") == expected, 'the re-read merged by RI: the returned row was replaced')
             check(await pg.evaluate('ri => R().rows.some(r => r.ri === ri)', 302), 'a row the re-read did not return stays')
-            # DESIGN l.57-59: each read goes straight to the API with the user's key and the model in use.
+            # DESIGN § Reading pages: each read goes straight to the API with the user's key and the model in use.
             print('API calls:', calls)
             check(len(calls) == 2, 'one API call for the read and one for the re-read')
             check(all(c['key'] == KEY for c in calls), 'every API call carries the saved key')
             check(all(c['direct'] == 'true' for c in calls), 'every API call sets anthropic-dangerous-direct-browser-access: true')
             check([c['model'] for c in calls] == ['claude-sonnet-5-5', 'claude-haiku-5-5'], 'the read uses Sonnet 5.5 and the re-read uses the selected model, Haiku 5.5')
             await pg.screenshot(path=str(OUT_DIR / 'pwa-route.png'))
-            # DESIGN l.52: a new version shows a banner and is applied only when the user taps Reload.
+            # DESIGN § Hosting and install: a new version shows a banner and is applied only when the user taps Reload.
             subprocess.run([sys.executable, str(ROOT / 'build.py')], check=True, stdout=subprocess.DEVNULL)
             await pg.evaluate('navigator.serviceWorker.getRegistration().then(r => r.update())')
             await pg.wait_for_selector('#updBar.on', timeout=10000)

@@ -1,9 +1,9 @@
-"""Run screen: Time Allowance dialog and layouts.
+"""Run screen: Time Allowance dialog (390 px portrait), then strip, active card, and full screen at every supported layout.
 Run from the repo root after a build:
   Windows:    .venv/Scripts/python build.py && .venv/Scripts/python test/e2e/e2e5.py
   Linux/WSL:  .venv/bin/python build.py && .venv/bin/python test/e2e/e2e5.py
 Exits 1 if any check fails or an unexpected page error is captured."""
-from _common import APP_URL, OUT_DIR, launch_browser, check, capture_errors, run
+from _common import APP_URL, OUT_DIR, LAYOUTS, launch_browser, check, capture_errors, run
 from playwright.async_api import async_playwright
 
 # Values the checks compare against come from docs/DESIGN.md rules, or are computed in the page with Core.
@@ -27,7 +27,7 @@ async def main():
         zero = 'TA ' + await pg.evaluate('fmtTA(0)')
         check(await pg.inner_text('#btnTA') == zero, f'TA button starts at {zero}')
         check(not await pg.evaluate("/time adj/i.test(document.body.innerText)"), 'no visible "Time adj" text')
-        # TA dialog (DESIGN l.25): +60, +15, -5 are pending: 70 s until Set.
+        # TA dialog (DESIGN § Run controls (TA dialog)): +60, +15, -5 are pending: 70 s until Set.
         await pg.click('#btnTA'); await pg.click('[data-st="60"]'); await pg.click('[data-st="15"]'); await pg.click('[data-st="-5"]')
         want = await pg.evaluate('fmtTA(70)')
         check(await pg.input_value('#taIn') == want, f'pending TA is +60 +15 -5 = 70 s, shown as {want}')
@@ -38,7 +38,7 @@ async def main():
         await pg.click('#btnTA'); await pg.click('[data-st="60"]'); await pg.mouse.click(10, 830)   # tap outside
         check(await pg.inner_text('#btnTA') == zero and not await pg.is_visible('#modal.on'), 'tapping outside closes the dialog and leaves TA unchanged')
 
-        # Set applies the TA: the button and the active card's TT follow Core (TT = CZT + CN + TA, DESIGN l.14).
+        # Set applies the TA: the button and the active card's TT follow Core (TT = CZT + CN + TA, DESIGN § Computation).
         await pg.click('#btnTA'); await pg.click('[data-st="60"]'); await pg.click('[data-st="15"]'); await pg.click('#mOk')
         want = await pg.evaluate('fmtTA(75)')
         check(await pg.inner_text('#btnTA') == 'TA ' + want, f'Set applies +60 +15 = 75 s, shown as TA {want}')
@@ -69,16 +69,33 @@ async def main():
 
         for k in ['5','5','-1']: await pg.click(f'[data-sp="{k}"]')
         check(await pg.input_value('#fSpeedo') == str(START_SPEEDO + 5 + 5 - 1), f'speedometer is {START_SPEEDO} +5 +5 -1')
-        await pg.screenshot(path=str(OUT_DIR / '18-run.png'))
 
-        # Full screen (DESIGN l.27): always hides the header; the small x exits.
-        await pg.click('#btnFS'); await pg.wait_for_timeout(200)
-        check(await pg.evaluate("document.body.classList.contains('focus')") and not await pg.is_visible('header'), 'full screen hides the header')
-        await pg.screenshot(path=str(OUT_DIR / '19-full.png'))
-        await pg.click('#btnFSx')
-        check(await pg.is_visible('header'), 'the exit button brings the header back')
-        await pg.set_viewport_size({'width':844,'height':390}); await pg.click('#btnFS'); await pg.wait_for_timeout(200)
-        check(not await pg.is_visible('header'), 'full screen hides the header in landscape')
-        await pg.screenshot(path=str(OUT_DIR / '20-full-land.png'))
+        # Layout-sensitive checks at every supported layout (DESIGN § Testing).
+        for w, h, label in LAYOUTS:
+            await pg.set_viewport_size({'width': w, 'height': h}); await pg.wait_for_timeout(200)
+            tag = f'{label} ({w}x{h})'
+            inside = """sel => { const r = document.querySelector(sel).getBoundingClientRect();
+                return r.width > 0 && r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight; }"""
+            # DESIGN § Run controls (strip): TA button on the left, speedometer on the right, both inside the viewport.
+            strip = await pg.evaluate("""() => { const t = document.getElementById('btnTA').getBoundingClientRect(), s = document.getElementById('fSpeedo').getBoundingClientRect();
+                return {order: t.right <= s.left, ta: t.left >= 0 && t.right <= innerWidth, sp: s.left >= 0 && s.right <= innerWidth}; }""")
+            check(strip['order'] and strip['ta'] and strip['sp'], f'{tag}: TA button is left of the speedometer and both fit the viewport ({strip})')
+            # DESIGN § Run controls (Run: Undo and Complete): the active card shows with both buttons reachable on screen.
+            check(await pg.is_visible('.active-card'), f'{tag}: the active card is visible')
+            for sel, name in [('#btnDone', 'Complete'), ('#btnUndo', 'Undo')]:
+                check(await pg.is_visible(sel) and await pg.evaluate(inside, sel), f'{tag}: {name} is visible and inside the viewport')
+            check(await pg.is_enabled('#btnUndo') and await pg.is_enabled('#btnDone'), f'{tag}: Complete and Undo are enabled with RIs completed')
+            # DESIGN § Run controls (Full screen): always hides the app's header and tabs; the small x (top right) exits.
+            await pg.click('#btnFS'); await pg.wait_for_timeout(200)
+            check(await pg.evaluate("document.body.classList.contains('focus')") and not await pg.is_visible('header') and not await pg.is_visible('#tabs'),
+                  f'{tag}: full screen hides the header and tabs')
+            x = await pg.evaluate("""() => { const r = document.getElementById('btnFSx').getBoundingClientRect();
+                return {vis: r.width > 0, right: r.right >= innerWidth / 2, top: r.top < innerHeight / 2, inside: r.left >= 0 && r.right <= innerWidth && r.top >= 0}; }""")
+            check(x['vis'] and x['right'] and x['top'] and x['inside'], f'{tag}: the exit x is shown at the top right ({x})')
+            await pg.screenshot(path=str(OUT_DIR / f'19-full-{w}x{h}.png'))
+            await pg.click('#btnFSx'); await pg.wait_for_timeout(200)
+            check(await pg.is_visible('header') and await pg.is_visible('#tabs') and not await pg.evaluate("document.body.classList.contains('focus')"),
+                  f'{tag}: the exit x brings the header and tabs back')
+            await pg.screenshot(path=str(OUT_DIR / f'18-run-{w}x{h}.png'))
         await b.close()
 run(main)
