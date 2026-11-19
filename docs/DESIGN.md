@@ -70,7 +70,7 @@ Moved from the claude.ai "Road Rally" Project. The app was first delivered as a 
 - Saved on the device (localStorage) after every change.
 - When the page runs inside Claude and is online, a private copy of each rally goes to the artifact db at data/users/<id>/<rallyId>.
 - Account copies arrive as frozen objects and are deep-copied when loaded (fix for the iPad "readonly property" error).
-- localStorage keys `rallyRT.v1` and `rallyRT.apikey` keep their legacy names; renaming either requires a migration.
+- localStorage keys are `rallyMonteStyle.v1` (rallies) and `rallyMonteStyle.apikey` (the API key). The earlier `rallyRT.v1` and `rallyRT.apikey` keys are deleted unread on load; there is no migration.
 - Rallies saved without Vehicle (in localStorage, JSON files, or account copies) load with it empty; there is no migration.
 - Export: JSON (full record) is the only round-trip format. CSV is an export-only report (augmented Route Instructions with class, close limit, and estimate lock status); its details block includes a Vehicle line after the crew lines, written even when empty. There is also an offline HTML copy.
 - If the browser refuses to save on the device, a banner says so.
@@ -99,7 +99,7 @@ Moved from the claude.ai "Road Rally" Project. The app was first delivered as a 
 - App name: `Rally: Monte Style` (manifest `name` and page title); `short_name`: `Monte Style`.
 - Hosted on GitHub Pages at https://bigbaaadbob.github.io/rally-monte-style/. Every push to `main` builds, runs the unit tests, and publishes only if they pass (`.github/workflows/pages.yml`).
 - Installable web app: `manifest.webmanifest` (standalone display, icons) and `sw.js`.
-- `sw.js` caches the app's own files, so the installed app opens and reloads with no signal. Requests to other sites (the Anthropic API) are never intercepted.
+- `sw.js` caches the app's own files, so the installed app opens and reloads with no signal. Requests to other sites (the Anthropic API) are never intercepted. Caches are named `rally-monte-style-<version>`; on activate, every cache with that prefix or the earlier `route-table-` prefix other than the current version is deleted.
 - Each build stamps a version into `sw.js` and the page (shown on the Data tab).
 - Updates: when a new version is published, the app shows "A new version of the app is ready." with a Reload button. It never reloads by itself, including on first install, so a rally in progress is never interrupted.
 - The Rallies tab shows install steps when the app is opened in a browser rather than installed: the Android Install button when Chrome offers one, and Share → Add to Home Screen on iPhone/iPad, with a note that the installed app's storage is separate from Safari's.

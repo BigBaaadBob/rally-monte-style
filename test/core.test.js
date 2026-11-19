@@ -232,8 +232,16 @@ assert.strictEqual(Core.lastCompleted({ rows: [] }), -1, 'nothing complete -> -1
   c = Core.compute(Rd)[e];
   assert.strictEqual(c.estLocked, false); assert.strictEqual(c.est, c.estLive);
   // an old v2 tap lock on an uncompleted row is ignored
-  Rd.rows[e + 1] = { ...Rd.rows[e + 1], estLock: 1, estLockBy: 'tap' };
-  assert.strictEqual(Core.compute(Rd)[e + 1].estLocked, false); }
+  Rd.rows[e + 1] = { ...Rd.rows[e + 1], estLock: 1 };
+  assert.strictEqual(Core.compute(Rd)[e + 1].estLocked, false);
+  // legacy row fields showEst and estLockBy are dropped; lockEst and unlockEst no longer exist
+  const leg = { ri: 1, om: 1, showEst: true, estLockBy: 'tap', estLock: 5 };
+  const n = Core.normRow(leg); assert.ok(!('showEst' in n) && !('estLockBy' in n), 'normRow drops legacy fields');
+  const m = Core.mergeRows([{ ...Core.normRow({ ri: 1, om: 1 }), estLock: 5 }], [leg]).rows[0];
+  assert.ok(!('showEst' in m) && !('estLockBy' in m), 'mergeRows drops legacy fields');
+  const x = Core.completeActive(Rd, 5), u = Core.uncomplete(Rd, e);
+  assert.ok(![...x, ...u].some(r => 'showEst' in r || 'estLockBy' in r), 'complete and uncomplete write no legacy fields');
+  assert.strictEqual(Core.lockEst, undefined); assert.strictEqual(Core.unlockEst, undefined); }
 // CSV
 const csv = Core.toCSV({ ...R, name: SAMPLE.rally.name, crew: { driver: 'Jane Driver', navigator: 'John Navigator', passengers: [] } });
 assert.ok(csv.includes(`${r2.ri},Y,${r2.om.toFixed(2)}/0.00,${(r2.om * 1.02).toFixed(2)}/0.00,${Core.fmtTOD(r2.czt)}`), 'CSV restart row');

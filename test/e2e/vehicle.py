@@ -87,7 +87,7 @@ async def main():
         await pg.click('#tabs button[data-v=route]')
         results = []
         for t in (csv_text, without):
-            await pg.click('#btnClearRT'); await pg.click('#mOk')
+            await pg.click('#btnClearRI'); await pg.click('#mOk')
             await pg.click('#btnPaste'); await pg.fill('#pasteBox', t); await pg.click('#mOk')
             results.append(await pg.evaluate(PROPS))
         check(results[0] == results[1] and len(results[0]) > 0, f'Paste rows gives the same {len(results[0])} Route Instructions with or without the Vehicle line')

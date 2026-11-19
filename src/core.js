@@ -1,4 +1,4 @@
-// Route Table core: pure functions, no DOM, no clock.
+// Rally core: pure functions, no DOM, no clock.
 (function (root) {
   'use strict';
 
@@ -76,8 +76,8 @@
       cp: x.cp == null || x.cp === '' ? null : String(x.cp).trim(),
       instr: (x.instr || '').trim(),
       info: ((x.info || '') + (x.note ? ` [OCR: ${x.note}]` : '')).trim(),
-      done: !!x.done, ttDone: x.ttDone ?? null, doneAt: x.doneAt ?? null, showEst: !!x.showEst,
-      estLock: x.estLock ?? null, estLockBy: x.estLockBy ?? null,
+      done: !!x.done, ttDone: x.ttDone ?? null, doneAt: x.doneAt ?? null,
+      estLock: x.estLock ?? null,
     };
   }
 
@@ -91,7 +91,7 @@
       const i = out.findIndex(o => sameRI(o.ri, r.ri));
       if (i >= 0) {
         const o = out[i];
-        out[i] = { ...r, done: o.done, ttDone: o.ttDone, doneAt: o.doneAt, showEst: o.showEst, estLock: o.estLock, estLockBy: o.estLockBy };
+        out[i] = { ...r, done: o.done, ttDone: o.ttDone, doneAt: o.doneAt, estLock: o.estLock };
         replaced++;
       } else { out.push(r); added++; }
     }
@@ -190,16 +190,6 @@
     return { ok: true, ri, taEvents: events.map(e => sameRI(e.ri, old) ? { ...e, ri } : e) };
   }
 
-  // Lock / unlock a row's estimated TT. Returns new rows array (unchanged if nothing to lock).
-  function lockEst(rally, idx, by) {
-    const c = compute(rally)[idx];
-    if (!c || c.tt != null || c.estLive == null) return rally.rows;
-    return rally.rows.map((r, i) => i === idx ? { ...r, estLock: c.estLive, estLockBy: by || 'tap', showEst: true } : r);
-  }
-  function unlockEst(rally, idx) {
-    return rally.rows.map((r, i) => i === idx ? { ...r, estLock: null, estLockBy: null } : r);
-  }
-
   // Mark the active row complete; records the TT it had and locks any estimate.
   function completeActive(rally, now) {
     const a = activeIndex(rally);
@@ -208,13 +198,13 @@
     return rally.rows.map((r, i) => {
       if (i !== a) return r;
       const x = { ...r, done: true, ttDone: c.tt, doneAt: now ?? null };
-      if (c.tt == null) Object.assign(x, { estLock: c.estLive, estLockBy: c.estLive == null ? null : 'done' });
+      if (c.tt == null) Object.assign(x, { estLock: c.estLive });
       return x;
     });
   }
   // Un-complete a row; its locked estimate is released.
   function uncomplete(rally, idx) {
-    return rally.rows.map((r, i) => i === idx ? { ...r, done: false, ttDone: null, doneAt: null, estLock: null, estLockBy: null } : r);
+    return rally.rows.map((r, i) => i === idx ? { ...r, done: false, ttDone: null, doneAt: null, estLock: null } : r);
   }
   // Index of the completed row that comes last in RI order (never by completion time; ties -> highest index).
   function lastCompleted(rally) {
@@ -297,6 +287,6 @@
   }
 
   const Core = { parseTOD, fmtTOD, parseTA, fmtTA, TA_MAX, cmpRI, sameRI, normRow, mergeRows, compute, activeIndex, legOf,
-    setTA, renameRI, lockEst, unlockEst, completeActive, CLOSE_MI, closeMi, fmtOCF, uncomplete, lastCompleted, toCSV, parseCSV, parseOCR };
+    setTA, renameRI, completeActive, CLOSE_MI, closeMi, fmtOCF, uncomplete, lastCompleted, toCSV, parseCSV, parseOCR };
   if (typeof module !== 'undefined' && module.exports) module.exports = Core; else root.Core = Core;
 })(typeof window !== 'undefined' ? window : globalThis);
