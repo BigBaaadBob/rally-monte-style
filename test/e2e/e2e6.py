@@ -151,5 +151,27 @@ async def main():
         check(await sc() == offB, f'rally B restores its offset on return ({offB}); got {await sc()}')
         await goto_run(idA); await pg.wait_for_timeout(300)
         check(await sc() == offA, f'rally A restores its offset on return ({offA}); got {await sc()}')
+
+        # #39: wording. A no-OM row with no CZT that is active says "no OM, so no VM or estimate"; Clear run data lists what it clears.
+        await pg.click('#tabs button[data-v=rallies]'); await pg.click('#btnNewSample')
+        k = await pg.evaluate("""(() => { const r = R(), C = Core.compute(r);
+          const i = r.rows.findIndex((x, j) => j > 0 && x.om != null && x.czt == null && !x.restart);
+          if (i >= 0) { r.rows[i].om = null; save(r); } return i; })()""")
+        check(k > 0, 'found a row with an OM, no CZT, and no restart (picked by property) to blank')
+        await pg.click('#tabs button[data-v=run]')
+        for _ in range(80):
+            if await pg.evaluate(f'Core.activeIndex(R()) >= {k}'): break
+            await pg.click('#btnDone')
+        check(await pg.evaluate('Core.activeIndex(R())') == k, 'the blanked row is the active RI')
+        sub = await pg.evaluate("[...document.querySelectorAll('.active-card .small.muted')].map(e => e.textContent.trim())")
+        check('no OM, so no VM or estimate' in sub, f'active card for a row with no OM and no CZT says why ({sub})')
+        check(not any('no earlier TT' in t for t in sub), 'it does not say "no earlier TT in this leg"')
+        await pg.click('#tabs button[data-v=data]')
+        check((await pg.inner_text('#bResetRun')).strip() == 'Clear run data', 'the reset button is labelled Clear run data')
+        await pg.click('#bResetRun')
+        body = (await pg.inner_text('#mBody')).lower()
+        check('completion marks' in body and 'time allowances' in body and 'estimate locks' in body, f'Clear run data dialog lists completion marks, Time Allowances, and estimate locks ({body})')
+        check('toggle' not in body, 'Clear run data dialog no longer mentions estimate toggles')
+        await pg.click('#mCancel')
         await b.close()
 run(main)

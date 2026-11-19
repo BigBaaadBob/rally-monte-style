@@ -263,4 +263,12 @@ assert.strictEqual(Core.parseOCR('[]').length, 0);
   const num = Core.renameRI({ rows: [{ ri: 'a1' }, { ri: 9 }], taEvents: [{ ri: 'a1', ta: 1, at: 0 }] }, 0, '5');
   assert.strictEqual(num.ri, 5); assert.strictEqual(num.taEvents[0].ri, 5); }
 
+// CSV writes OCF with four decimals, like the Setup tab and the Data summary (#39)
+{ const R = { ...SAMPLE.rally, rows: Core.mergeRows([], SAMPLE.rows).rows, taEvents: [] };
+  const line = Core.toCSV(R, 'hms').split(String.fromCharCode(10)).find(l => l.startsWith('OCF,'));
+  assert.strictEqual(line, 'OCF,' + (+R.ocf).toFixed(4), 'CSV OCF line has four decimals');
+  const R1 = { ...R, ocf: 1 };
+  assert.strictEqual(Core.toCSV(R1, 'hms').split(String.fromCharCode(10)).find(l => l.startsWith('OCF,')), 'OCF,' + (1).toFixed(4), 'OCF 1 is written as four decimals');
+  assert.strictEqual(Core.fmtOCF(''), '', 'a blank OCF stays blank'); }
+
 console.log('core tests: all passed');

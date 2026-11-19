@@ -6,7 +6,7 @@ Moved from the claude.ai "Road Rally" Project. The app was first delivered as a 
 - Reads photos of the Route Instruction pages into a table of Route Instructions, merges by RI, and sorts.
 - User-visible text calls both the source pages and the app's table Route Instructions; RI means only a single Route Instruction; never Route Table, RT, RIs, or route information.
 - Adds VM and TT columns. OM and CZT are hidden on the Run screen.
-- Prep: rally name, date, crew (driver, navigator, and passengers), vehicle (free text, optional; Crew and vehicle card; shown only on the set-up form), car number (CN), Class (A, B, C, or D; same line as OCF), OCF (always displayed with four decimals, e.g. 1.0100; the Data summary does too), and the close-RI limit. Internet is allowed.
+- Prep: rally name, date, crew (driver, navigator, and passengers), vehicle (free text, optional; Crew and vehicle card; shown only on the set-up form), car number (CN), Class (A, B, C, or D; same line as OCF), OCF (always displayed with four decimals, e.g. 1.0100; the Data summary and the CSV do too), and the close-RI limit. Internet is allowed.
 - Setup entry rules (each is checked when the field is committed, by leaving it or pressing Enter; a rejected entry shows its message and the field reverts to its previous value, so nothing is partly applied):
   - CN: blank or a whole number from 0 to 999; blank computes as 0 minutes. Otherwise "Car number must be a whole number from 0 to 999".
   - Close-RI limit: blank or a number from 0 to 5.0 vehicle miles. Blank is stored and shown as the 0.5 default; 0 flags only rows with identical VMs. Otherwise "Close RI limit must be between 0 and 5.0 miles".
@@ -31,7 +31,7 @@ Moved from the claude.ai "Road Rally" Project. The app was first delivered as a 
 - Flags above the table: an RI with no OM, an OM less than the RI before it (missed restart?), a CZT earlier than the previous CZT, and rows out of order. The first 8 are listed, then "…and n more". Rows from the last read are highlighted.
 
 **Data**
-- Clear completion marks and TAs, Delete rally (which also deletes the account copy inside Claude), and Remove saved API key each ask first. Duplicate rally adds " (copy)" to the name and makes the copy current.
+- Clear run data (clears all completion marks, Time Allowances, and estimate locks; the Route Instructions stay), Delete rally (which also deletes the account copy inside Claude), and Remove saved API key each ask first. Duplicate rally adds " (copy)" to the name and makes the copy current.
 
 **Dialogs**
 - Tapping outside a dialog closes it without change. Esc closes no dialog; it only cancels a speedometer edit.
@@ -41,7 +41,7 @@ Moved from the claude.ai "Road Rally" Project. The app was first delivered as a 
 - The first row starts the first leg. Each later restart (OM printed "x.xx/0.00") starts a new leg at VM 0 and TA 0. The first row need not be printed "/0.00", because pages may be read in any order; there is no check or warning on it. There is no separate leg for rows before the first restart: they are in leg 1, with VM = OM × OCF in the printed frame. A leg is identified by the RI of its first row.
 - A bare "/0.00" OM is a restart at OM 0.00. This is how a rally's start RI is printed. It is accepted wherever OMs are read: row entry, CSV and JSON paste, and both reading prompts.
 - Row entry of an OM accepts only blank, a number (x.xx), a restart (x.xx/0.00), or a bare restart (/0.00). Any other entry, such as 5/3, is rejected with "OM format: x.xx, x.xx/0.00, or /0.00", and the row's OM and Rst stay as they were.
-- A row with no OM (for example the finish RI) shows no VM and no estimate, and shows a TT only if it has a CZT. It is skipped when checking close rows and can be completed like any other row.
+- A row with no OM (for example the finish RI) shows no VM and no estimate, and shows a TT only if it has a CZT. It is skipped when checking close rows and can be completed like any other row. When the active RI has no OM and no CZT, the active card says "no OM, so no VM or estimate".
 - TT = CZT + CN minutes + TA.
 - TA (confirmed by the owner): a TA entered on a row applies from that row through the row before the next restart. Rows before it keep their TT, and a restart starts at TA 0. A later TA in the same leg replaces the earlier one from its own row on. The app stores TA as events {ri, ta, at}.
 - Renaming an RI moves its TA events to the new RI. Deleting a row removes its TA events; Clear Route Instructions removes all TA events and completion marks.
@@ -74,7 +74,7 @@ Moved from the claude.ai "Road Rally" Project. The app was first delivered as a 
 - If the browser refuses to save on the device, a banner says so.
 - Account copies: the copy with the newer `updated` stamp wins; rallies only on the device are pushed; deleting a rally deletes its account copy.
 - JSON export is `{app: 'rally-monte-style', version: 1, rally: {…}}`. Import accepts this or a bare rally object, always creates a new rally with a new id and makes it current, and adds " (imported)" to the name when that id already exists. A file that isn't a rally JSON export is rejected with a message.
-- CSV format: details lines Rally, Date, Driver, Navigator, Passengers ("; " separated), Vehicle, Car number, Class, OCF, Close RI limit (mi), and Speedometer (est.); a blank line; then the columns RI, Restart, OM, VM, CZT, TA (s), TA entered here, TT, Est TT, Est locked, Done, Done at, CP, Instruction, and Info. A restart's OM is written x.xx/0.00 and its VM prev/0.00. Time columns follow the Time format setting.
+- CSV format: details lines Rally, Date, Driver, Navigator, Passengers ("; " separated), Vehicle, Car number, Class, OCF, Close RI limit (mi), and Speedometer (est.), with OCF written to four decimals (e.g. 1.0100); a blank line; then the columns RI, Restart, OM, VM, CZT, TA (s), TA entered here, TT, Est TT, Est locked, Done, Done at, CP, Instruction, and Info. A restart's OM is written x.xx/0.00 and its VM prev/0.00. Time columns follow the Time format setting.
 - Exports: Download CSV, Download JSON, Copy CSV, and Copy JSON. File names are "<date> <name>", with each run of characters other than a letter, digit, `_`, `.`, or `-` replaced by a single `_`. Where downloads aren't available, the app says to use Copy. The offline copy is saved as `rally-route-instructions.html`.
 
 ## Getting the Route Instructions in
