@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Rally: Monte Style is a single-page, offline-capable PWA for SCCA Monte Carlo–style (TDS) road rallies. It reads photos of Route Instruction pages into a table of Route Instructions. The pages are read by Claude. The app is written in plain JavaScript, with no framework, no npm dependencies and no bundler. It then computes VM (vehicle miles) and TT (target time), and estimates TT for rows that have no CZT. `docs/DESIGN.md` is the authoritative spec for behavior. Read it before changing any computation or Run-screen behavior.
+Rally: Monte Style is a single-page, offline-capable PWA for SCCA Monte Carlo–style (TDS) road rallies. It reads photos of Route Instruction pages into a table of Route Instructions. The pages are read by Claude, through the Anthropic API with the user's own key. The app is written in plain JavaScript, with no framework, no npm dependencies and no bundler. It then computes VM (vehicle miles) and TT (target time), and estimates TT for rows that have no CZT. `docs/DESIGN.md` is the authoritative spec for behavior. Read it before changing any computation or Run-screen behavior.
 
 ## Build
 
@@ -40,13 +40,11 @@ node test/core.test.js                     # unit tests for src/core.js (this is
 - `run_all.py` runs these e2e scripts, in this order (each needs `dist/` built). Supported layouts (DESIGN § Testing): 390x844 and 360x780 portrait, and 844x390 landscape. Logic checks run at 390x844 only unless noted.
   - `e2e5.py`: Run screen Time Allowance dialog, entry rules, and speedometer (390 only). At all three layouts: the TA and speedometer strip, the active card with Complete and Undo, and full screen (header and tabs hidden, ✕ exits).
   - `e2e6.py`: Run screen TT and estimate display, NEXT IN, locked estimates, Undo order, and per-rally scroll (390 only). At all three layouts: scroll kept through changes, Complete placing the active RI near the top, and first-visit placement. Also asserts the Run list's columns (two with the CP column in landscape at 640 px or wider, else one with no CP) at the three layouts and at a 768x1024 wide portrait, which is not a supported layout and only checks that two columns need landscape. Use it for any Run-screen change.
-  - `e2e7.py`: Route screen paste and CSV import, offline copy, and Read without an API key (390 only).
-  - `mock.py`: the claude.ai runtime, account copies, and photo merge (820x1180 viewport).
-  - `pwa.py`: offline cache, update prompt, and API-key reading with the Anthropic API mocked (390 only). Use it for anything touching install, offline, or API reading.
+  - `e2e7.py`: Route screen paste and CSV import, Read without an API key, and no offline-copy button (390 only).
+  - `pwa.py`: offline cache, update prompt, and API-key reading (photo read, merge by RI, rally switch during a read) with the Anthropic API mocked (390 only). Use it for anything touching install, offline, or API reading.
   - `validation.py`: entry validation for CN, close-RI limit, OCF, OM, and the speedometer (390 only).
   - `vehicle.py`: the Vehicle field on the set-up form. At all three layouts: its placement below Passengers and its width. At 390 only: persistence, the JSON round trip, old files, and CSV.
-- `mock.py` mocks the claude.ai runtime: the `db` capability returns frozen snapshot data, as the real one does, and the `sample` capability returns canned rows. `add_init_script` installs it with `window.__REMOTE__` (the account copies) before the app loads. It runs like the other scripts and covers the account-copy and photo-merge path.
-- The offline-copy CSP check is in `e2e7.py`. An init script (`INJECT`) adds a `<meta http-equiv="Content-Security-Policy" id="fakecsp">` and a script that sets `window.__injected` to the live page's head. The test first checks that both are present in the live page, then reads `SELF_HTML` (the offline copy's source) and asserts it contains neither `fakecsp` nor `__injected`, and that the count of `<script data-rt` in the copy equals the live page's `script[data-rt]` count (the app's own scripts are kept).
+- The guard test is at the end of `test/core.test.js`: it reads `dist/index.html` (run `build.py` first) and fails if it contains a removed claude.ai runtime identifier. CI builds before the unit tests, so it gates the Pages deploy.
 - CI (`.github/workflows/pages.yml`) runs only `python3 build.py` and `node test/core.test.js`. It does not run the e2e tests.
 
 ## Rules for every change
@@ -94,11 +92,10 @@ Source files must never contain `</script` (the build asserts this). Edit `src/`
 - Estimated TT = TT of the nearest earlier row in the same leg with both a TT and a VM + ΔVM ÷ speedometer mph. An estimate locks only when its row is completed.
 - No system clock or sensor value feeds any computation. Timestamps are only logged.
 
-**Two runtime hosts, one file.** The same `dist/index.html` runs:
-1. **Standalone (GitHub Pages, installable PWA).** Pages are read by calling `https://api.anthropic.com/v1/messages` directly from the browser, using the user's own API key (localStorage `rallyMonteStyle.apikey`, never exported). The model picker lists Sonnet 5.5 (default), Haiku 5.5 and Opus 5.5. `web/sw.js` serves the app's own origin cache-first and never intercepts cross-origin requests. A new version waits and is applied only when the user taps Reload (`skipWaiting` message). The app must never reload by itself.
-2. **As a claude.ai artifact.** The app detects `window.claude.use`. It then uses the `sample` capability to read pages and the `db` capability for account copies (`data/users/<id>/<rallyId>`). The service worker is not registered in this mode. Account copies arrive deeply frozen and must be deep-copied before mutation. To test it, see `## Testing`.
+**One runtime host.** `dist/index.html` runs only as a web page (GitHub Pages, installed or in a browser); it is not built or tested as a claude.ai artifact.
+Pages are read by calling `https://api.anthropic.com/v1/messages` directly from the browser, using the user's own API key (localStorage `rallyMonteStyle.apikey`, never exported). The model picker lists Sonnet 5.5 (default), Haiku 5.5 and Opus 5.5. `web/sw.js` serves the app's own origin cache-first and never intercepts cross-origin requests. A new version waits and is applied only when the user taps Reload (`skipWaiting` message). The app must never reload by itself.
 
-**Storage.** The whole app state is in localStorage under `rallyMonteStyle.v1` (`{rallies, cur, prefs}`) and is saved after every change. Export formats: CSV (an export-only report; Paste rows reads back its rows), JSON (the only round-trip format), and an offline HTML copy. The offline copy strips CSP meta tags and scripts injected by the host.
+**Storage.** The whole app state is in localStorage under `rallyMonteStyle.v1` (`{rallies, cur, prefs}`) and is saved after every change. Export formats: CSV (an export-only report; Paste rows reads back its rows), JSON (the only round-trip format). Rallies are stored only on the device.
 
 **UI constraints from DESIGN.md.** The Run screen must keep the user's scroll position through every change. It scrolls only when Complete is pressed. Test layouts: see `docs/DESIGN.md` § Testing.
 

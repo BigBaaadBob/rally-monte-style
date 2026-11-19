@@ -37,7 +37,7 @@ Moved from the claude.ai "Road Rally" Project. The app was first delivered as a 
 - "Run data" means completion marks, Time Allowances, and estimate locks.
 - Clear run data, Delete rally, and Remove saved API key each ask first.
 - Clear run data is titled "Clear run data", its OK button says "Clear", and its text is: `Clear the run data for “<rally name>”? The Route Instructions stay. This cannot be undone.` The rally name falls back to "this rally".
-- Delete rally is titled "Delete rally", its OK button says "Delete", and its text is: `Delete “<rally name>” and all its data from this device[ and your Claude account]? This cannot be undone. Export it first if you want a record.` The bracketed phrase appears only inside Claude (when the account copy exists), and that copy is deleted too. It also drops the rally's page photos. Rows returned by a read of that rally that is still running are discarded, with no message. The rally name falls back to "Untitled rally".
+- Delete rally is titled "Delete rally", its OK button says "Delete", and its text is: `Delete “<rally name>” and all its data from this device? This cannot be undone. Export it first if you want a record.` It also drops the rally's page photos. Rows returned by a read of that rally that is still running are discarded, with no message. The rally name falls back to "Untitled rally".
 - Duplicate rally adds " (copy)" to the name and makes the copy current. The copy starts with no page photos.
 
 **Dialogs**
@@ -75,21 +75,16 @@ Moved from the claude.ai "Road Rally" Project. The app was first delivered as a 
 
 ## Storage
 - Saved on the device (localStorage) after every change.
-- When the page runs inside Claude and is online, a private copy of each rally goes to the artifact db at data/users/<id>/<rallyId>.
-- Account copies arrive as frozen objects and are deep-copied when loaded (fix for the iPad "readonly property" error).
+- Rallies are stored only on the device. There is no account or cloud copy.
 - localStorage keys are `rallyMonteStyle.v1` (rallies) and `rallyMonteStyle.apikey` (the API key). The earlier `rallyRT.v1` and `rallyRT.apikey` keys are deleted unread on load; there is no migration.
-- Rallies saved without Vehicle (in localStorage, JSON files, or account copies) load with it empty; there is no migration.
-- Export: JSON (full record) is the only round-trip format. CSV is an export-only report (augmented Route Instructions with class, close limit, and estimate lock status); its details block includes a Vehicle line after the crew lines, written even when empty. There is also an offline HTML copy.
+- Rallies saved without Vehicle (in localStorage or JSON files) load with it empty; there is no migration.
+- Export: JSON (full record) is the only round-trip format. CSV is an export-only report (augmented Route Instructions with class, close limit, and estimate lock status); its details block includes a Vehicle line after the crew lines, written even when empty.
 - If the browser refuses to save on the device, a banner says so.
-- Account copies: the copy with the newer `updated` stamp wins; rallies only on the device are pushed; deleting a rally deletes its account copy.
 - JSON export is `{app: 'rally-monte-style', version: 1, rally: {…}}`. Import accepts this or a bare rally object, always creates a new rally with a new id and makes it current, and adds " (imported)" to the name when that id already exists. A file that isn't a rally JSON export is rejected with a message.
 - CSV format: details lines Rally, Date, Driver, Navigator, Passengers ("; " separated), Vehicle, Car number, Class, OCF, Close RI limit (mi), and Speedometer (est.), with OCF written to four decimals (e.g. 1.0100); a blank line; then the columns RI, Restart, OM, VM, CZT, TA (s, whole seconds), TA entered here, TT, Est TT, Est locked, Done, Done at, CP, Instruction, and Info. A restart's OM is written x.xx/0.00 and its VM prev/0.00. Time columns follow the Time format setting.
-- Exports: Download CSV, Download JSON, Copy CSV, and Copy JSON. File names are "<date> <name>", with each run of characters other than a letter, digit, `_`, `.`, or `-` replaced by a single `_`. Where downloads aren't available, the app says to use Copy. The offline copy is saved as `rally-route-instructions.html`.
-
+- Exports: Download CSV, Download JSON, Copy CSV, and Copy JSON. File names are "<date> <name>", with each run of characters other than a letter, digit, `_`, `.`, or `-` replaced by a single `_`.
 ## Getting the Route Instructions in
-- Inside Claude: Add page photos → Read. The artifact `sample` capability reads one page per call.
-- Standalone copy: needs an Anthropic API key, entered on the Route tab (see Reading pages). With no key, Read explains this. API errors say whether the network or the key failed.
-- Offline copy: strips any security-policy meta tags and scripts injected by the hosting viewer from the downloaded HTML, so the standalone copy can reach the API.
+- Add page photos → Read. Reading needs an Anthropic API key, entered on the Route tab (see Reading pages). With no key, Read explains this. API errors say whether the network or the key failed.
 - A copied photo can be pasted on the Route tab where the device allows it.
 - Add page photos opens a picker that accepts several images at once, so a whole rally can be added in one go.
 - Paste rows accepts CSV only: an app CSV, with the rally details (including the Vehicle line) above the `RI,…` header line skipped, or any CSV with a header line that has the same column names. It reads the RI, OM (a `x.xx/0.00` or bare `/0.00` OM marks a restart), CZT, CP, Instruction, and Info columns by header name, and ignores the computed columns. Completion marks and TA entries are not restored; the JSON export is the full record. Text with no header line, such as pasted JSON or prose, finds no rows.
@@ -98,9 +93,9 @@ Moved from the claude.ai "Road Rally" Project. The app was first delivered as a 
 ## Testing
 - The core is pure (no DOM, no clock) and is unit-tested under Node.
 - Playwright runs at 390 and 360 px portrait and 844 px landscape. These are the supported layouts.
-- A mock of the Claude runtime (frozen db snapshots plus a sample reader) covers the account-copy and photo-merge path, including a rally switch while a read is running.
+- `pwa.py` covers photo read and merge by RI on the API-key path, including a rally switch while a read is running.
+- A guard test checks that the built page makes no claude.ai artifact-runtime calls.
 - The tests use the built-in invented sample rally, "Sample Rally" (`src/sample.js`); mocks of the page reader return invented canned rows of their own.
-- The offline copy's stripping of security-policy meta tags and injected scripts is verified against a simulated injected CSP.
 
 ## Hosting and install
 - App name: `Rally: Monte Style` (manifest `name` and page title); `short_name`: `Monte Style`.
@@ -110,14 +105,14 @@ Moved from the claude.ai "Road Rally" Project. The app was first delivered as a 
 - Each build stamps a version into `sw.js` and the page (shown on the Data tab).
 - Updates: when a new version is published, the app shows "A new version of the app is ready." with a Reload button. It never reloads by itself, including on first install, so a rally in progress is never interrupted.
 - The Rallies tab shows install steps when the app is opened in a browser rather than installed: the Android Install button when Chrome offers one, and Share → Add to Home Screen on iPhone/iPad, with a note that the installed app's storage is separate from Safari's.
-- The same `dist/index.html` still works as a claude.ai artifact (no offline cache there; Claude's own reader is used).
+- The app runs only as a web page (GitHub Pages, installed or in a browser). It is not built or tested as a claude.ai artifact.
 
 ## Reading pages
-- Outside claude.ai, pages are read with the user's Anthropic API key, entered on the Route tab and stored only in that device's local storage. It is never exported or committed. The Data tab can remove it. Only a key that starts with `sk-ant-` is saved; any other entry is rejected with a message and nothing is stored.
+- Pages are read with the user's Anthropic API key, entered on the Route tab and stored only in that device's local storage. It is never exported or committed. The Data tab can remove it. Only a key that starts with `sk-ant-` is saved; any other entry is rejected with a message and nothing is stored.
 - Model picker (saved per device): Sonnet 5.5 (default, about 2¢/page), Haiku 5.5 (about 0.1¢/page), Opus 5.5 (about 7¢/page). The cost notes assume Nov 2026 list prices and an image of about 3,900 tokens. Pages are sent at up to 2,000 px.
 - A note the reader returns for a row is appended to its Info as ' [OCR: …]'.
 - Reader replies: the JSON array of rows is found even with prose around it and [brackets] in instruction text, and several fenced blocks are combined. A fenced block that isn't JSON is skipped, and the rows from the valid blocks are used. A reply with no valid block finds no rows.
-- Each page thumbnail shows the model that read it last (inside claude.ai there is no model label). Every page that has been read offers "Re-read", which reads that page again with the currently selected model (inside claude.ai, with Claude's reader). Each row it returns replaces the row with the same RI and other rows stay, so a row misread on an earlier read stays until it is deleted in the Route editor.
+- Each page thumbnail shows the model that read it last. Every page that has been read offers "Re-read", which reads that page again with the currently selected model. Each row it returns replaces the row with the same RI and other rows stay, so a row misread on an earlier read stays until it is deleted in the Route editor.
 - Errors name the cause: no network, key rejected (401), refused (402/403: credit or model access), or reply cut off.
 **Page photos**
 - Page photos belong to the rally they were added to. The Route tab shows only the open rally's photos. Opening another rally neither shows nor clears them; they are there again when that rally is reopened.

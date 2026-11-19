@@ -1,6 +1,6 @@
 """Build the app into dist/.
 
-dist/index.html        the whole app in one self-contained file (also works as a claude.ai artifact)
+dist/index.html        the whole app in one self-contained file
 dist/manifest.webmanifest, dist/icons/   for installing to the home screen
 dist/sw.js             offline cache, stamped with this build's version
 """

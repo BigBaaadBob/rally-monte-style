@@ -319,4 +319,12 @@ assert.strictEqual(Core.parseOCR('no JSON here at all').length, 0, 'prose with n
   assert.strictEqual(Core.toCSV(R1, 'hms').split(String.fromCharCode(10)).find(l => l.startsWith('OCF,')), 'OCF,' + (1).toFixed(4), 'OCF 1 is written as four decimals');
   assert.strictEqual(Core.fmtOCF(''), '', 'a blank OCF stays blank'); }
 
+// Guard (DESIGN § Testing): the built page makes no claude.ai artifact-runtime calls. Needs `python build.py` first.
+{ const fs = require('fs'), path = require('path');
+  const built = path.join(__dirname, '..', 'dist', 'index.html');
+  assert.ok(fs.existsSync(built), 'dist/index.html is missing: run build.py before the unit tests');
+  const html = fs.readFileSync(built, 'utf8');
+  for (const id of ['window.claude', 'claude.use', 'useCap', 'hasClaude', 'caps.sample', 'caps.db', 'caps.downloads', 'Cloud.', 'data/users', 'SELF_HTML', '__REMOTE__', 'rally-route-instructions.html'])
+    assert.ok(!html.includes(id), `the built page still contains the removed runtime identifier ${id}`); }
+
 console.log('core tests: all passed');

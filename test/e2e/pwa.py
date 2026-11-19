@@ -66,7 +66,7 @@ async def main():
             # DESIGN § Hosting and install: sw.js caches the app's own files, so the installed app opens and reloads offline.
             check(await pg.evaluate('!!navigator.serviceWorker.controller'), 'the service worker controls the page')
             await pg.click('#btnNewSample')
-            # DESIGN § Tabs and settings (Data): outside Claude the Delete rally text has no account phrase.
+            # DESIGN § Tabs and settings (Data): the Delete rally text is as in DESIGN.
             name = await pg.evaluate("R().name || 'Untitled rally'")
             await pg.click('#tabs button[data-v=data]'); await pg.click('#bDel')
             body = await pg.inner_text('#mBody')
