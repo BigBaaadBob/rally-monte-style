@@ -10,13 +10,13 @@ PAGE = str(pathlib.Path(__file__).resolve().parent / 'page.png')   # committed f
 
 START_SPEEDO = 35          # DESIGN "Computation": a new rally starts at 35 mph
 
-# The reply replaces a row that already exists in the loaded sample (RI filled in from the page) and adds a new "<RI>A" row.
+# A JSON reply in the old chat-read format; Paste rows no longer reads it (RI filled in from a row of the loaded sample).
 REPLY = '''Here are the rows. RI {ri} is at the [curve-left sign].
 ```json
 [{{"ri":{ri},"om":"2.29","czt":"15:42:00","cp":65,"instr":"CHECKPOINT at [curve-left sign, 30 MPH].","info":"(CP 65.)"}},
  {{"ri":"{ri}A","om":"2.40","czt":null,"cp":null,"instr":"new row","info":""}}]
 ```'''
-CSV = '210,1.50,,,"R at [sign]",note\n211,1.70,16:20:00,90,CHECKPOINT,'
+CSV = 'RI,OM,CZT,CP,Instruction,Info\n210,1.50,,,"R at [sign]",note\n211,1.70,16:20:00,90,CHECKPOINT,'
 INJECT = """new MutationObserver((m, o) => { if (document.head && !document.getElementById('fakecsp')) {
   const meta = document.createElement('meta'); meta.httpEquiv = 'Content-Security-Policy'; meta.content = "connect-src 'self'"; meta.id = 'fakecsp';
   document.head.prepend(meta); const sc = document.createElement('script'); sc.textContent = 'window.__injected=1'; document.head.appendChild(sc); o.disconnect(); } })
@@ -81,21 +81,16 @@ async def main():
         await pg.fill(f'#rtEdit [data-i="{k}"][data-k="ri"]', str(dup)); await pg.dispatch_event(f'#rtEdit [data-i="{k}"][data-k="ri"]', 'change')
         check(await pg.evaluate("R().taEvents.map(e => e.ri)") == [new], 'a rejected rename leaves the TA on its RI')
         await pg.evaluate("([k, old]) => { const r = R(); r.rows[k].ri = old; r.taEvents = []; save(r); renderRoute(); }", [k, old])
-        # chat route: Copy instructions puts text on the clipboard (DESIGN l.40)
+        # DESIGN Getting the Route Instructions in: Paste rows accepts CSV only; a pasted JSON reply finds no rows.
         await pg.click('#tabs button[data-v=route]')
-        await pg.click('#btnChat'); await pg.click('#mBody button.primary')
-        clip = await pg.evaluate('navigator.clipboard.readText()')
-        check(len(clip.strip()) > 0, 'Copy instructions puts text on the clipboard')
-        print('copied prompt starts:', clip[:60])
         ri0 = await pg.evaluate("R().rows.find(r => !r.restart).ri")
-        before = await pg.evaluate("R().rows")
-        reply = REPLY.format(ri=ri0)
-        await pg.click('#mOk'); await pg.fill('#pasteBox', reply); await pg.click('#mOk')
-        # DESIGN l.59 and Core.mergeRows: merge by RI, new text replaces old, then sort.
-        merged = await pg.evaluate("([before, text]) => Core.mergeRows(before, Core.parseOCR(text)).rows.map(r => r.ri).join(',')", [before, reply])
-        check(await pg.evaluate("R().rows.map(r => r.ri).join(',')") == merged, f'pasted reply merges by RI and sorts ({merged})')
-        check(await pg.evaluate("ri => R().rows.find(r => String(r.ri) === String(ri)).instr", ri0) == 'CHECKPOINT at [curve-left sign, 30 MPH].', f'RI {ri0} text is replaced by the reply')
-        check(await pg.evaluate("ri => R().rows.some(r => r.ri === ri + 'A' && r.instr === 'new row')", ri0), f'RI {ri0}A is added')
+        rows_before = await pg.evaluate(ROWS)
+        await pg.click('#btnPaste'); await pg.fill('#pasteBox', REPLY.format(ri=ri0)); await pg.click('#mOk')
+        check(await pg.is_visible('#modal.on'), 'a pasted JSON reply keeps the Paste rows dialog open')
+        check(await pg.evaluate(ROWS) == rows_before, 'a pasted JSON reply leaves the table unchanged')
+        check('csv' in (await pg.inner_text('#mBody')).lower(), 'the Paste rows dialog says it takes CSV')
+        await pg.click('#mCancel')
+        check('claude chat' not in (await pg.inner_text('#routeBody')).lower(), 'the Route tab has no "Read in a Claude chat" text')
         # DESIGN l.40 (Paste rows): no rows found keeps the dialog open and leaves the table unchanged.
         rows_before = await pg.evaluate(ROWS)
         await pg.click('#btnPaste'); await pg.fill('#pasteBox', 'nothing useful'); await pg.click('#mOk')
@@ -129,6 +124,6 @@ async def main():
         body = await pg2.inner_text('#mBody')
         check(await pg2.is_visible('#modal.on') and 'api key' in body.lower(), f"offline Read without a key explains the API key ({await pg2.inner_text('#mTitle')!r})")
         await pg2.screenshot(path=str(OUT_DIR / '22-offline-read.png'))
-        await pg2.click('#mOk'); await pg2.screenshot(path=str(OUT_DIR / '23-chat.png'))
+        await pg2.click('#mOk')
         await b.close()
 run(main)

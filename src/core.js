@@ -257,7 +257,8 @@
 
   // Parse CSV text into raw rows {ri, om, czt, cp, instr, info}. Accepts either an export from toCSV
   // (rally details, a blank line, then an `RI,…` header: columns are found by name, computed ones ignored)
-  // or bare lines in the order RI,OM,CZT,CP,Instruction,Info. Quoted fields may contain commas and newlines.
+  // or any CSV with a header line that has those column names. Text with no `RI,…` header returns no rows.
+  // Quoted fields may contain commas and newlines.
   function parseCSV(text) {
     const recs = []; let cells = [], cur = '', q = false, any = false;
     const endRec = () => { cells.push(cur); if (any || cells.length > 1) recs.push(cells); cells = []; cur = ''; any = false; };
@@ -272,13 +273,11 @@
     endRec();
     const isHead = c => c.length > 1 && /^\s*ri\s*$/i.test(c[0]);
     const h = recs.findIndex(isHead);
-    const idx = { ri: 0, om: 1, czt: 2, cp: 3, instr: 4, info: 5 };
-    let body = recs;
-    if (h >= 0) {
-      const names = recs[h].map(s => s.trim().toLowerCase());
-      for (const [key, name] of [['ri', 'ri'], ['om', 'om'], ['czt', 'czt'], ['cp', 'cp'], ['instr', 'instruction'], ['info', 'info']]) idx[key] = names.indexOf(name);
-      body = recs.slice(h + 1);
-    } else body = recs.filter(c => !isHead(c));
+    if (h < 0) return [];                          // no header line (JSON, prose, bare lines): not CSV, no rows
+    const idx = {};
+    const names = recs[h].map(s => s.trim().toLowerCase());
+    for (const [key, name] of [['ri', 'ri'], ['om', 'om'], ['czt', 'czt'], ['cp', 'cp'], ['instr', 'instruction'], ['info', 'info']]) idx[key] = names.indexOf(name);
+    const body = recs.slice(h + 1);
     const at = (c, i) => i >= 0 && c[i] != null ? c[i] : '';
     return body.filter(c => at(c, idx.ri).trim() !== '').map(c => ({
       ri: at(c, idx.ri), om: at(c, idx.om), czt: at(c, idx.czt) || null, cp: at(c, idx.cp) || null,
@@ -295,7 +294,8 @@
     for (let c of cands) {                         // several fenced blocks (e.g. one per page) are concatenated
       const m = c.match(/\[\s*(\{|\])/);              // start of an array of objects, not "[curve-left sign]"
       if (m) { const b = c.lastIndexOf(']'); c = c.slice(m.index, b + 1); }
-      const v = JSON.parse(c);
+      let v;
+      try { v = JSON.parse(c); } catch (e) { continue; }   // a block that isn't JSON is skipped; the valid ones still count
       out = out.concat(Array.isArray(v) ? v : (v && Array.isArray(v.rows) ? v.rows : []));
     }
     return out;

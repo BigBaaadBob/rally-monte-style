@@ -21,6 +21,11 @@ def serve():
                 proc.terminate(); raise RuntimeError(f'http.server did not start on 127.0.0.1:{PORT} within 10 s')
             time.sleep(0.1)
 
+def canned(n, model):
+    # Invented reader reply: the first read returns RIs 301 and 302; a re-read returns only 301, with the model in its text.
+    ris = [301, 302] if n == 1 else [301]
+    return [{'ri': ri, 'om': '1.10', 'czt': None, 'cp': None, 'instr': f'L at T by {model}', 'info': ''} for ri in ris]
+
 async def main():
     srv = serve()
     calls = []
@@ -32,7 +37,7 @@ async def main():
                 body = json.loads(route.request.post_data)
                 calls.append({'model': body['model'], 'max_tokens': body['max_tokens'], 'key': route.request.headers.get('x-api-key'),
                               'direct': route.request.headers.get('anthropic-dangerous-direct-browser-access')})
-                rows = [{'ri': 300 + len(calls), 'om': '1.10', 'czt': None, 'cp': None, 'instr': 'L at T', 'info': ''}]
+                rows = canned(len(calls), body['model'])
                 await route.fulfill(status=200, content_type='application/json',
                                     body=json.dumps({'content': [{'type': 'text', 'text': '```json\n' + json.dumps(rows) + '\n```'}], 'stop_reason': 'end_turn'}),
                                     headers={'access-control-allow-origin': '*'})
@@ -70,17 +75,23 @@ async def main():
             cap = await pg.inner_text('.thumbs figcaption')
             check('Sonnet' in cap, f'the page thumbnail names the model that read it ({cap!r})')
             check(await pg.evaluate('ri => R().rows.some(r => r.ri === ri)', 300 + 1), 'the rows from the first read are in the table')
-            await pg.click('[data-opus="0"]'); await pg.wait_for_selector('#modal.on'); await pg.click('#mOk')
-            cap = await pg.inner_text('.thumbs figcaption')
-            check('Opus' in cap and await pg.query_selector('[data-opus="0"]') is None, f'the Opus re-read renames the thumbnail and the button goes ({cap!r})')
+            # Re-read uses the model selected now (not a fixed one) and merges by RI: a returned row replaces the same RI, other rows stay.
             await pg.select_option('#fModel', 'claude-haiku-5-5')
             check(await pg.evaluate('store.prefs.model') == 'claude-haiku-5-5', 'the chosen model is saved')
+            check(await pg.query_selector('[data-opus]') is None and (await pg.inner_text('[data-reread="0"]')).strip() == 'Re-read', 'the page offers "Re-read" (no "Re-read: Opus")')
+            before = await pg.evaluate('R().rows')
+            expected = await pg.evaluate("([before, rows]) => Core.mergeRows(before, rows).rows.map(r => r.ri + ':' + r.instr).join('|')", [before, canned(2, 'claude-haiku-5-5')])
+            await pg.click('[data-reread="0"]'); await pg.wait_for_selector('#modal.on'); await pg.click('#mOk')
+            cap = await pg.inner_text('.thumbs figcaption')
+            check('Haiku' in cap and 'Sonnet' not in cap, f'the thumbnail shows the model that read the page last ({cap!r})')
+            check(await pg.evaluate("R().rows.map(r => r.ri + ':' + r.instr).join('|')") == expected, 'the re-read merged by RI: the returned row was replaced')
+            check(await pg.evaluate('ri => R().rows.some(r => r.ri === ri)', 302), 'a row the re-read did not return stays')
             # DESIGN l.57-59: each read goes straight to the API with the user's key and the model in use.
             print('API calls:', calls)
-            check(len(calls) == 2, 'one API call for the read and one for the Opus re-read')
+            check(len(calls) == 2, 'one API call for the read and one for the re-read')
             check(all(c['key'] == KEY for c in calls), 'every API call carries the saved key')
             check(all(c['direct'] == 'true' for c in calls), 'every API call sets anthropic-dangerous-direct-browser-access: true')
-            check([c['model'] for c in calls] == ['claude-sonnet-5-5', 'claude-opus-5-5'], 'the read uses Sonnet 5.5 and the re-read uses Opus 5.5')
+            check([c['model'] for c in calls] == ['claude-sonnet-5-5', 'claude-haiku-5-5'], 'the read uses Sonnet 5.5 and the re-read uses the selected model, Haiku 5.5')
             await pg.screenshot(path=str(OUT_DIR / 'pwa-route.png'))
             # DESIGN l.52: a new version shows a banner and is applied only when the user taps Reload.
             subprocess.run([sys.executable, str(ROOT / 'build.py')], check=True, stdout=subprocess.DEVNULL)
