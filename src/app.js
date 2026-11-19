@@ -40,7 +40,7 @@ function blankRally() {
     rows: [], taEvents: [], created: now(), updated: now() };
 }
 const R = () => store.rallies[store.cur] || null;
-const fmtOCF = v => +v > 0 ? (+v).toFixed(4) : String(v ?? '');   // OCF is always shown with four decimals
+const fmtOCF = Core.fmtOCF;   // OCF is always shown with four decimals
 
 function save(rally) {
   if (rally) { rally.updated = now(); Cloud.queue(rally.id); }
@@ -540,7 +540,7 @@ function renderRun() {
     const ttHtml = c.tt != null ? `<div class="big num">${fmtT(c.tt)}</div>`
       : (c.est != null ? `<div class="big num est">≈${fmtT(c.est)}</div>
           <div class="small muted">est. at ${esc(r.speedo)} mph from RI ${esc(c.estAnchor)}</div>`
-      : `<div class="big num muted">—</div><div class="small muted">${r.speedo ? 'no earlier TT in this leg' : 'set speedometer for an estimate'}</div>`);
+      : `<div class="big num muted">—</div><div class="small muted">${x.om == null ? 'no OM, so no VM or estimate' : r.speedo ? 'no earlier TT in this leg' : 'set speedometer for an estimate'}</div>`);
     card = `<div class="active-card">
       <div class="ac-head"><span class="ac-ri">RI ${esc(x.ri)}</span>
         ${c.restart ? '<span class="badge rs">RESTART · zero trip odo</span>' : ''}
@@ -758,7 +758,7 @@ function renderData() {
     <div class="small muted" style="margin-top:8px">App version ${esc(APP_VERSION)}</div>
   </div>
   <div class="card"><h3>Reset or delete</h3>
-    <div class="row"><button id="bResetRun" ${done || tas.length ? '' : 'disabled'}>Clear completion marks and TAs</button>
+    <div class="row"><button id="bResetRun" ${done || tas.length ? '' : 'disabled'}>Clear run data</button>
       <button id="bDup">Duplicate rally</button>
       <button id="bDel" class="danger">Delete rally</button></div>
   </div>`;
@@ -781,7 +781,7 @@ function renderData() {
     } catch (err) { toast('That file is not a rally JSON export'); }
   };
   if ($('bKeyDel')) $('bKeyDel').onclick = () => confirmBox('Remove API key', 'Remove the saved Anthropic API key from this device?', 'Remove', () => { try { localStorage.removeItem(LS_KEY_API); } catch (e) {} renderData(); });
-  $('bResetRun').onclick = () => confirmBox('Clear run data', 'Clear all completion marks, time adjustments, and estimate toggles? The Route Instructions stay.', 'Clear', () => {
+  $('bResetRun').onclick = () => confirmBox('Clear run data', 'Clear all completion marks, Time Allowances, and estimate locks? The Route Instructions stay.', 'Clear', () => {
     r.rows = r.rows.map(x => ({ ...x, done: false, ttDone: null, doneAt: null, estLock: null, estLockBy: null })); r.taEvents = []; save(r); renderData();
   });
   $('bDup').onclick = () => {

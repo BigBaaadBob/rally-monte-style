@@ -232,13 +232,15 @@
   }
 
   // ---------- export ----------
+  // OCF is always written with four decimals (e.g. 1.0100); a blank or non-positive value is left as entered.
+  const fmtOCF = v => +v > 0 ? (+v).toFixed(4) : String(v ?? '');
   function csvEsc(v) { v = v == null ? '' : String(v); return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v; }
   function toCSV(rally, mode) {
     const C = compute(rally);
     const crew = rally.crew || {};
     const head = [
       ['Rally', rally.name], ['Date', rally.date], ['Driver', crew.driver], ['Navigator', crew.navigator],
-      ['Passengers', (crew.passengers || []).join('; ')], ['Vehicle', rally.vehicle], ['Car number', rally.cn], ['Class', rally.cls], ['OCF', rally.ocf],
+      ['Passengers', (crew.passengers || []).join('; ')], ['Vehicle', rally.vehicle], ['Car number', rally.cn], ['Class', rally.cls], ['OCF', fmtOCF(rally.ocf)],
       ['Close RI limit (mi)', closeMi(rally)],
       ['Speedometer (est.)', rally.speedo],
     ].map(r => r.map(csvEsc).join(','));
@@ -300,6 +302,6 @@
   }
 
   const Core = { parseTOD, fmtTOD, parseRel, fmtRel, cmpRI, sameRI, normRow, mergeRows, compute, activeIndex, legOf,
-    setTA, renameRI, lockEst, unlockEst, completeActive, CLOSE_MI, closeMi, uncomplete, lastCompleted, toCSV, parseCSV, parseOCR };
+    setTA, renameRI, lockEst, unlockEst, completeActive, CLOSE_MI, closeMi, fmtOCF, uncomplete, lastCompleted, toCSV, parseCSV, parseOCR };
   if (typeof module !== 'undefined' && module.exports) module.exports = Core; else root.Core = Core;
 })(typeof window !== 'undefined' ? window : globalThis);
