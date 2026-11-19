@@ -28,10 +28,16 @@ Moved from the claude.ai "Road Rally" Project. The app was first delivered as a 
 - CZT accepts H:MM:SS(.s), H:MM.cc, and H:MM, with hours below 48; displayed times wrap at 24 h. Any other entry shows "CZT format: HH:MM:SS or HH:MM.cc" and reverts.
 - An RI can't be blank or duplicate another RI; either shows a message and reverts. RI order is the number, then the suffix (12 < 12A < 13). An RI with no number sorts last.
 - Add row gives the new row the next RI (last + 1, or last + "+" for a text RI) and copies the previous row's OM (0 after a restart). The first row added is "/0.00". Delete row and Clear Route Instructions each ask first.
+- Clear Route Instructions is titled "Clear Route Instructions", its OK button says "Clear", and its text is: `Clear all n Route Instructions and their run data from “<rally name>”? This cannot be undone.` With exactly one row it reads `Clear the 1 Route Instruction and its run data from “<rally name>”? This cannot be undone.` The rally name falls back to "this rally". It removes the rows, all Time Allowances, and the last-read highlight; completion marks and estimate locks go with the rows. The text says nothing about page photos, and the action leaves them in place. The button is disabled when the rally has no Route Instructions, and is enabled again once a row is added, pasted, or read.
+- Dialog wording avoids contractions (for example "cannot", not "can't").
 - Flags above the table: an RI with no OM, an OM less than the RI before it (missed restart?), a CZT earlier than the previous CZT, and rows out of order. The first 8 are listed, then "…and n more". Rows from the last read are highlighted.
 
 **Data**
-- Clear run data (clears all completion marks, Time Allowances, and estimate locks; the Route Instructions stay), Delete rally (which also deletes the account copy inside Claude), and Remove saved API key each ask first. Duplicate rally adds " (copy)" to the name and makes the copy current.
+- "Run data" means completion marks, Time Allowances, and estimate locks.
+- Clear run data, Delete rally, and Remove saved API key each ask first.
+- Clear run data is titled "Clear run data", its OK button says "Clear", and its text is: `Clear the run data for “<rally name>”? The Route Instructions stay. This cannot be undone.` The rally name falls back to "this rally".
+- Delete rally is titled "Delete rally", its OK button says "Delete", and its text is: `Delete “<rally name>” and all its data from this device[ and your Claude account]? This cannot be undone. Export it first if you want a record.` The bracketed phrase appears only inside Claude (when the account copy exists), and that copy is deleted too. The rally name falls back to "Untitled rally".
+- Duplicate rally adds " (copy)" to the name and makes the copy current.
 
 **Dialogs**
 - Tapping outside a dialog closes it without change. Esc closes no dialog; it only cancels a speedometer edit.

@@ -361,7 +361,9 @@ function renderRoute() {
     const w = document.querySelector('#v-route'); w.scrollTop = w.scrollHeight;
   };
   $('btnSort').onclick = () => { r.rows.sort((a, b) => Core.cmpRI(a.ri, b.ri)); save(r); renderRoute(); };
-  $('btnClearRI').onclick = () => confirmBox('Clear Route Instructions', `Remove all ${r.rows.length} Route Instructions from “${esc(r.name || 'this rally')}”? Completion marks and Time Allowances go too.`, 'Clear', () => {
+  $('btnClearRI').onclick = () => confirmBox('Clear Route Instructions', (r.rows.length === 1
+    ? `Clear the 1 Route Instruction and its run data from “${esc(r.name || 'this rally')}”? This cannot be undone.`
+    : `Clear all ${r.rows.length} Route Instructions and their run data from “${esc(r.name || 'this rally')}”? This cannot be undone.`), 'Clear', () => {
     r.rows = []; r.taEvents = []; newSet.clear(); save(r); renderRoute();
   });
   $('btnPaste').onclick = pasteRows;
@@ -753,14 +755,14 @@ function renderData() {
     } catch (err) { toast('That file is not a rally JSON export'); }
   };
   if ($('bKeyDel')) $('bKeyDel').onclick = () => confirmBox('Remove API key', 'Remove the saved Anthropic API key from this device?', 'Remove', () => { try { localStorage.removeItem(LS_KEY_API); } catch (e) {} renderData(); });
-  $('bResetRun').onclick = () => confirmBox('Clear run data', 'Clear all completion marks, Time Allowances, and estimate locks? The Route Instructions stay.', 'Clear', () => {
+  $('bResetRun').onclick = () => confirmBox('Clear run data', `Clear the run data for “${esc(r.name || 'this rally')}”? The Route Instructions stay. This cannot be undone.`, 'Clear', () => {
     r.rows = r.rows.map(x => ({ ...x, done: false, ttDone: null, doneAt: null, estLock: null })); r.taEvents = []; save(r); renderData();
   });
   $('bDup').onclick = () => {
     const nr = JSON.parse(JSON.stringify(r)); nr.id = newId(); nr.name = (r.name || 'Rally') + ' (copy)'; nr.created = nr.updated = now();
     store.rallies[nr.id] = nr; store.cur = nr.id; save(nr); toast('Duplicated'); renderAll();
   };
-  $('bDel').onclick = () => confirmBox('Delete rally', `Delete “${esc(r.name || 'Untitled rally')}” and its Route Instructions from this device${Cloud.col ? ' and your account' : ''}? Export it first if you want a record.`, 'Delete', () => {
+  $('bDel').onclick = () => confirmBox('Delete rally', `Delete “${esc(r.name || 'Untitled rally')}” and all its data from this device${Cloud.col ? ' and your Claude account' : ''}? This cannot be undone. Export it first if you want a record.`, 'Delete', () => {
     delete store.rallies[r.id]; delete runPos[r.id]; store.cur = null; Cloud.queue(r.id); save(); show('rallies');
   });
 }

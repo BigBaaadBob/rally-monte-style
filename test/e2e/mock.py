@@ -50,5 +50,12 @@ async def main():
         check(await pg.evaluate('window.__sampleCalls') == 1, 'one sample call for one page photo')
         await pg.click('#tabs button[data-v=run]'); await pg.click('#btnDone')
         check(await pg.evaluate("R().rows.filter(r => r.done).length") == 1, 'Complete marks exactly one row done')
+        # DESIGN § Tabs and settings (Data): inside Claude the Delete rally text names the Claude account.
+        name = await pg.evaluate("R().name || 'Untitled rally'")
+        await pg.click('#tabs button[data-v=data]'); await pg.click('#bDel')
+        body = await pg.inner_text('#mBody')
+        check(await pg.inner_text('#mTitle') == 'Delete rally' and (await pg.inner_text('#mOk')).strip() == 'Delete', 'Delete rally dialog title and OK label')
+        check(body == f'Delete “{name}” and all its data from this device and your Claude account? This cannot be undone. Export it first if you want a record.', f'Delete rally text on the claude.ai path ({body})')
+        await pg.click('#mCancel')
         await b.close()
 run(main)
