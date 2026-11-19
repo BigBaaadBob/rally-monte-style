@@ -3,12 +3,11 @@ Run from the repo root after a build:
   Windows:    .venv/Scripts/python build.py && .venv/Scripts/python test/e2e/vehicle.py
   Linux/WSL:  .venv/bin/python build.py && .venv/bin/python test/e2e/vehicle.py
 Exits 1 if any check fails or an unexpected page error is captured."""
-from _common import APP_URL, OUT_DIR, launch_browser, check, capture_errors, run
+from _common import APP_URL, OUT_DIR, LAYOUTS, launch_browser, check, capture_errors, run
 import json
 from playwright.async_api import async_playwright
 
 VEHICLE = 'Blue hatchback, "test"'
-LAYOUTS = [(390, 844), (360, 780), (844, 390)]     # DESIGN Testing: 390 and 360 portrait, 844 landscape
 PROPS = "R().rows.map(r => { const n = Core.normRow(r); return [n.ri, n.om, n.restart, n.czt, n.cp, n.instr, n.info]; })"
 
 
@@ -24,7 +23,7 @@ async def main():
         check(await pg.evaluate("R().vehicle") == 'Rally Car', 'a rally from the sample has Vehicle "Rally Car" (DESIGN Scope)')
 
         # Placement: card heading, and a full-width Vehicle field below Passengers and Add passenger
-        for w, h in LAYOUTS:
+        for w, h, _label in LAYOUTS:
             await pg.set_viewport_size({'width': w, 'height': h})
             card = await pg.evaluate("""() => { const f = document.getElementById('fVeh'), card = f.closest('.card'),
               add = document.getElementById('btnPax'), pax = document.getElementById('paxList');

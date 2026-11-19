@@ -31,7 +31,7 @@ async def main():
         await ctx.grant_permissions(['clipboard-read','clipboard-write'])
         pg = await ctx.new_page(); capture_errors(pg, label='live page')
         await pg.goto(APP_URL); await pg.evaluate('localStorage.clear()'); await pg.reload()
-        # DESIGN l.39: the offline copy strips security-policy meta tags and scripts injected by the host.
+        # DESIGN § Getting the Route Instructions in (Offline copy): the offline copy strips security-policy meta tags and scripts injected by the host.
         check(await pg.evaluate("!!document.getElementById('fakecsp') && window.__injected === 1"), 'test setup: the injected CSP meta and script are in the live page')
         selfhtml = await pg.evaluate('SELF_HTML')
         check('fakecsp' not in selfhtml, 'offline copy has no injected CSP meta')
@@ -56,7 +56,7 @@ async def main():
         await pg.click('#tabs button[data-v=run]'); await pg.click('#btnDone')
         check(await pg.evaluate("R().rows.every(x => x.done)"), 'completing the no-OM row completes the rally')
         await pg.evaluate("R().rows.forEach(x => { x.done = false; x.ttDone = null; x.estLock = null; })")
-        # DESIGN l.19: the speedometer is saved with the rally (reloading keeps it).
+        # DESIGN § Storage: the speedometer is saved with the rally (reloading keeps it).
         await pg.click('#tabs button[data-v=run]'); await pg.click('[data-sp="5"]'); await pg.click('[data-sp="1"]')
         await pg.reload(); await pg.click('#tabs button[data-v=run]')
         check(await pg.input_value('#fSpeedo') == str(START_SPEEDO + 6), f'speedometer after reload is {START_SPEEDO} +5 +1')
@@ -91,13 +91,13 @@ async def main():
         check('csv' in (await pg.inner_text('#mBody')).lower(), 'the Paste rows dialog says it takes CSV')
         await pg.click('#mCancel')
         check('claude chat' not in (await pg.inner_text('#routeBody')).lower(), 'the Route tab has no "Read in a Claude chat" text')
-        # DESIGN l.40 (Paste rows): no rows found keeps the dialog open and leaves the table unchanged.
+        # DESIGN § Getting the Route Instructions in (Paste rows): no rows found keeps the dialog open and leaves the table unchanged.
         rows_before = await pg.evaluate(ROWS)
         await pg.click('#btnPaste'); await pg.fill('#pasteBox', 'nothing useful'); await pg.click('#mOk')
         check(await pg.is_visible('#modal.on'), 'a paste with no rows keeps the dialog open')
         check(await pg.evaluate(ROWS) == rows_before, 'a paste with no rows leaves the table unchanged')
         await pg.click('#mCancel')
-        # DESIGN l.40: Paste rows also accepts CSV lines (RI,OM,CZT,CP,Instruction,Info).
+        # DESIGN § Getting the Route Instructions in (Paste rows): Paste rows also accepts CSV lines (RI,OM,CZT,CP,Instruction,Info).
         await pg.click('#btnPaste'); await pg.fill('#pasteBox', CSV); await pg.click('#mOk')
         added = await pg.evaluate("R().rows.filter(r => r.ri >= 210).map(r => r.ri + ':' + r.instr).join(' | ')")
         check(added == '210:R at [sign] | 211:CHECKPOINT', f'CSV lines are added with their instruction text ({added})')
@@ -117,7 +117,7 @@ async def main():
         await pg.click('#tabs button[data-v=route]')
         await pg.click('#btnPaste'); await pg.fill('#pasteBox', csv_text); await pg.click('#mOk')
         check(await pg.evaluate(PROPS) == rows_exported and len(rows_exported) > 0, f'an exported CSV re-imports the same {len(rows_exported)} rows through Paste rows')
-        # offline copy runs standalone; Read explains the API key (DESIGN l.38)
+        # offline copy runs standalone; Read explains the API key (DESIGN § Getting the Route Instructions in)
         pg2 = await (await b.new_context(viewport={'width':390,'height':844})).new_page(); capture_errors(pg2, label='offline copy')
         await pg2.goto((OUT_DIR / 'offline.html').as_uri()); await pg2.click('#btnNewSample'); await pg2.click('#tabs button[data-v=route]')
         await pg2.set_input_files('#fPages', PAGE); await pg2.click('#btnRead')

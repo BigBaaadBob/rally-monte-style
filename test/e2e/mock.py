@@ -35,7 +35,7 @@ async def main():
                   'cn':12,'ocf':1.02,'speedo':30,'rows':[{'ri':299,'om':0.5,'restart':False,'czt':None,'cp':None,'instr':'x','info':''}],
                   'taEvents':[],'created':1,'updated':9999999999999}
         await ctx.add_init_script(f"window.__REMOTE__ = {json.dumps([remote])};" + MOCK)
-        pg = await ctx.new_page(); capture_errors(pg)    # the frozen account copy must load without a page error (DESIGN l.33)
+        pg = await ctx.new_page(); capture_errors(pg)    # the frozen account copy must load without a page error (DESIGN § Storage)
         await pg.goto(APP_URL); await pg.evaluate('localStorage.clear()'); await pg.reload()
         await pg.wait_for_function("document.getElementById('cloud').textContent.includes('account')", timeout=5000)
         await pg.click('[data-open="rCLOUD"]'); await pg.click('#tabs button[data-v=route]')
@@ -44,7 +44,7 @@ async def main():
         await pg.click('#btnRead'); await pg.wait_for_selector('#modal.on', timeout=8000)
         print('dialog:', (await pg.inner_text('#mBody')).replace('\n',' | ')[:200])
         await pg.click('#mOk')
-        # DESIGN l.37 and l.59: one call per page photo, and the rows merge by RI and sort.
+        # DESIGN § Getting the Route Instructions in and § Reading pages: one call per page photo, and the rows merge by RI and sort.
         want = await pg.evaluate("([before, rows]) => Core.mergeRows(before, rows).rows.map(r => r.ri).join(',')", [before, READ_ROWS])
         check(await pg.evaluate("R().rows.map(r => r.ri).join(',')") == want, f'Read merges the page rows into the account copy ({want})')
         check(await pg.evaluate('window.__sampleCalls') == 1, 'one sample call for one page photo')

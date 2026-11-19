@@ -17,6 +17,17 @@ OUT_DIR = ROOT / 'test/e2e/out'
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
+# Supported layouts (DESIGN § Testing): (width, height, label). WIDE_PORTRAIT is not a supported layout; it is
+# used only to check that the two-column Run list needs landscape, not just a wide viewport (DESIGN § Run controls, Run layout).
+LAYOUTS = [(390, 844, '390 portrait'), (360, 780, '360 portrait'), (844, 390, '844 landscape')]
+WIDE_PORTRAIT = (768, 1024, '768 wide portrait')
+
+
+def wide_run_layout(w, h):
+    """DESIGN § Run controls (Run layout): two columns and the CP column in landscape at 640 px or wider, else one and none."""
+    return w > h and w >= 640
+
+
 def launch_browser(p, **kw):
     """Launch Playwright's bundled Chromium. Returns the awaitable, so call as `await launch_browser(p)`."""
     args = list(kw.pop('args', []))
