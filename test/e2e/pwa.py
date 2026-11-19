@@ -64,6 +64,12 @@ async def main():
             # DESIGN § Hosting and install: sw.js caches the app's own files, so the installed app opens and reloads offline.
             check(await pg.evaluate('!!navigator.serviceWorker.controller'), 'the service worker controls the page')
             await pg.click('#btnNewSample')
+            # DESIGN § Tabs and settings (Data): outside Claude the Delete rally text has no account phrase.
+            name = await pg.evaluate("R().name || 'Untitled rally'")
+            await pg.click('#tabs button[data-v=data]'); await pg.click('#bDel')
+            body = await pg.inner_text('#mBody')
+            check(body == f'Delete “{name}” and all its data from this device? This cannot be undone. Export it first if you want a record.', f'Delete rally text on the API-key path ({body})')
+            await pg.click('#mCancel')
             n_rallies = await pg.evaluate('Object.keys(store.rallies).length')
             await ctx.set_offline(True)
             await pg.reload(); await pg.wait_for_selector('#tabs')

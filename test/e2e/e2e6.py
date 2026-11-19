@@ -188,9 +188,11 @@ async def main():
         await pg.click('#tabs button[data-v=data]')
         check((await pg.inner_text('#bResetRun')).strip() == 'Clear run data', 'the reset button is labelled Clear run data')
         await pg.click('#bResetRun')
-        body = (await pg.inner_text('#mBody')).lower()
-        check('completion marks' in body and 'time allowances' in body and 'estimate locks' in body, f'Clear run data dialog lists completion marks, Time Allowances, and estimate locks ({body})')
-        check('toggle' not in body, 'Clear run data dialog no longer mentions estimate toggles')
+        # DESIGN § Tabs and settings (Data): Clear run data text; the name comes from the open rally.
+        name = await pg.evaluate("R().name || 'this rally'")
+        check(await pg.inner_text('#mTitle') == 'Clear run data' and (await pg.inner_text('#mOk')).strip() == 'Clear', 'Clear run data dialog title and OK label')
+        body = await pg.inner_text('#mBody')
+        check(body == f'Clear the run data for “{name}”? The Route Instructions stay. This cannot be undone.', f'Clear run data dialog text ({body})')
         await pg.click('#mCancel')
         # Layout-sensitive Run-screen checks at every supported layout (DESIGN § Testing), each in a fresh context.
         # The 390 px portrait scroll checks ran above; 360 portrait and 844 landscape run them here. Columns run at all of
