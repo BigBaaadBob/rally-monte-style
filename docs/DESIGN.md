@@ -12,7 +12,7 @@ Moved from the claude.ai "Road Rally" Project. The app was first delivered as a 
   - Close-RI limit: blank or a number from 0 to 5.0 vehicle miles. Blank is stored and shown as the 0.5 default; 0 flags only rows with identical VMs. Otherwise "Close RI limit must be between 0 and 5.0 miles".
   - OCF: a number greater than 0, shown to four decimals. Blank, 0, a negative number, or text is rejected with "OCF must be a positive number.".
 - New from sample (Rallies tab): each tap creates a new rally from the built-in sample and opens set-up. Name "Sample Rally", today's date, CN 7, Class C, OCF 1.0100, vehicle "Rally Car", crew Jane Driver and John Navigator with no passengers, speedometer at its start value, the default close limit, no TA, nothing completed.
-- Run: shows the first uncompleted RI. Small Undo button and a 58 px Complete button; tap a ✓ to un-complete that row. No internet needed.
+- Run: shows the first uncompleted RI. Small Undo button and a 58 px Complete button; Undo un-completes the last completed RI in RI order. No internet needed.
 
 ## Tabs and settings
 
@@ -50,7 +50,7 @@ Moved from the claude.ai "Road Rally" Project. The app was first delivered as a 
 - Locking: an estimate is locked only when its RI is completed; it then ignores later speedometer and TA changes. Un-completing releases it. No lock symbol.
 - Speedometer: saved with each rally (reloading keeps it, and a blank value is never saved or reset on load). A new rally starts at 35 mph.
 - Close rows: adjacent rows whose VM gap is ≤ the per-rally limit (Setup; default 0.5 vehicle miles) are highlighted in the VM cell. Across a restart the gap runs to the previous frame's end. The active card shows "NEXT IN x.xx".
-- No system clock or sensor feeds any computation. Completion timestamps are logged only.
+- No system clock or sensor feeds any computation. Each RI's completion time is logged for post-event analysis and as a backup record of checkpoint passage if the Richta app misses one. It is exported in the CSV. No logged time feeds VM, TT, TA, Undo, or estimates.
 
 ## Run controls
 - One strip: a TA button on the left (shows the current TA, highlighted when non-zero) and the speedometer on the right (−5 −1 [mph] +1 +5, limit 1–100 mph; a blank entry is invalid, like any value outside 1–100: it shows "Speedometer must be between 1 and 100 mph" and reverts).

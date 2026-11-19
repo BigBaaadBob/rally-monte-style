@@ -579,15 +579,6 @@ function renderRun() {
     if (s === '' || !(+s >= 1 && +s <= SPEEDO_MAX)) { toast(`Speedometer must be between 1 and ${SPEEDO_MAX} mph`); return false; }
     setSpeedo(+s);
   });
-  $('runTbl').addEventListener('click', e => {
-    const chk = e.target.closest('[data-chk]');
-    if (!chk) return;
-    const i = +chk.dataset.chk, x = r.rows[i];
-    if (!x.done) return;
-    confirmBox('Mark not complete?', `RI ${esc(x.ri)} will be marked not complete${i < a || a < 0 ? ' and becomes the active RI' : ''}.`, 'Mark not complete', () => {
-      r.rows = Core.uncomplete(r, i); save(r); renderRun();
-    });
-  });
 }
 // Tapping a field selects its whole value, so typing replaces it.
 function selectOnTap(inp) {
