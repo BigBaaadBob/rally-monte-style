@@ -133,7 +133,7 @@ async def main():
         # DESIGN § Run controls (Scrolling): each rally keeps its own scroll position, in memory only; a rally's Run tab
         # places its active RI near the top (one row above) the first time it is shown in a session; no active RI -> top.
         goto_run = lambda rid: pg.evaluate("id => { store.cur = id; show('run'); }", rid)
-        idA = await pg.evaluate('R().id')                      # all RIs complete after the sweep above
+        idA = await pg.evaluate('R().id')                      # all Route Instructions complete after the sweep above
         await pg.reload(); await pg.click('#tabs button[data-v=run]'); await pg.wait_for_timeout(300)
         check(await pg.evaluate('Core.activeIndex(R())') < 0, 'rally A has no active RI')
         check(await sc() == 0, 'first visit to a rally with no active RI starts at the top')

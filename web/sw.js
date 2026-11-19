@@ -3,7 +3,7 @@
 // is fetched in the background when online and waits until the page asks to switch.
 // Requests to other sites (the Anthropic API) are never touched.
 const VERSION = '__VERSION__';
-const CACHE = 'route-table-' + VERSION;
+const CACHE = 'rally-monte-style-' + VERSION;
 const SHELL = __ASSETS__;
 
 self.addEventListener('install', e => {
@@ -12,7 +12,7 @@ self.addEventListener('install', e => {
 
 self.addEventListener('activate', e => {
   e.waitUntil((async () => {
-    for (const k of await caches.keys()) if (k.startsWith('route-table-') && k !== CACHE) await caches.delete(k);
+    for (const k of await caches.keys()) if ((k.startsWith('rally-monte-style-') || k.startsWith('route-table-')) && k !== CACHE) await caches.delete(k);
     await self.clients.claim();
   })());
 });

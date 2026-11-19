@@ -22,7 +22,7 @@ def serve():
             time.sleep(0.1)
 
 def canned(n, model):
-    # Invented reader reply: the first read returns RIs 301 and 302; a re-read returns only 301, with the model in its text.
+    # Invented reader reply: the first read returns RI 301 and RI 302; a re-read returns only 301, with the model in its text.
     ris = [301, 302] if n == 1 else [301]
     return [{'ri': ri, 'om': '1.10', 'czt': None, 'cp': None, 'instr': f'L at T by {model}', 'info': ''} for ri in ris]
 
@@ -53,6 +53,14 @@ async def main():
             check(man['short_name'] == 'Monte Style', f"manifest short_name is Monte Style ({man['short_name']!r})")
             check(await pg.title() == 'Rally: Monte Style', f'document.title is Rally: Monte Style ({await pg.title()!r})')
             print('version:', await pg.evaluate('APP_VERSION'))
+            # DESIGN Storage: the old rallyRT.* keys are deleted unread on load; nothing is migrated.
+            await pg.evaluate("localStorage.setItem('rallyRT.v1', '{\"rallies\":{}}'); localStorage.setItem('rallyRT.apikey', 'sk-ant-stale')")
+            await pg.reload(); await pg.wait_for_selector('#tabs')
+            check(await pg.evaluate("localStorage.getItem('rallyRT.v1')") is None, 'the old rallyRT.v1 key is deleted on load')
+            check(await pg.evaluate("localStorage.getItem('rallyRT.apikey')") is None, 'the old rallyRT.apikey key is deleted on load')
+            check(await pg.evaluate("localStorage.getItem('rallyMonteStyle.apikey')") is None, 'the old API key is not carried to the new key')
+            # DESIGN Hosting: caches with the old and new prefixes that are not current are deleted on update.
+            await pg.evaluate("Promise.all(['route-table-old', 'rally-monte-style-old', 'unrelated-cache'].map(n => caches.open(n)))")
             # DESIGN l.50: sw.js caches the app's own files, so the installed app opens and reloads offline.
             check(await pg.evaluate('!!navigator.serviceWorker.controller'), 'the service worker controls the page')
             await pg.click('#btnNewSample')
@@ -66,10 +74,10 @@ async def main():
             check(await pg.input_value('#fModel') == 'claude-sonnet-5-5', 'the model picker defaults to Sonnet 5.5 (DESIGN l.58)')
             # DESIGN l.57: only a key starting sk-ant- is saved; anything else is rejected and nothing is stored.
             await pg.fill('#fKey', 'not-a-key'); await pg.click('#bKey')
-            check(await pg.evaluate("localStorage.getItem('rallyRT.apikey')") is None, 'a malformed key is rejected and not stored')
+            check(await pg.evaluate("localStorage.getItem('rallyMonteStyle.apikey')") is None, 'a malformed key is rejected and not stored')
             KEY = 'sk-ant-test-123'
             await pg.fill('#fKey', KEY); await pg.click('#bKey')
-            check(await pg.evaluate("localStorage.getItem('rallyRT.apikey')") == KEY, 'a key starting sk-ant- is saved on the device')
+            check(await pg.evaluate("localStorage.getItem('rallyMonteStyle.apikey')") == KEY, 'a key starting sk-ant- is saved on the device')
             await pg.set_input_files('#fPages', str(PAGE))
             await pg.click('#btnRead'); await pg.wait_for_selector('#modal.on'); await pg.click('#mOk')
             cap = await pg.inner_text('.thumbs figcaption')
@@ -104,6 +112,10 @@ async def main():
             await pg.wait_for_selector('#tabs')
             new = await pg.evaluate('APP_VERSION')
             check(old != new, f'Reload applies the new version ({old} -> {new})')
+            names = await pg.evaluate('caches.keys()')
+            check('route-table-old' not in names and 'rally-monte-style-old' not in names, f'stale caches are deleted by the real service-worker update ({names})')
+            check('unrelated-cache' in names, 'a cache with neither prefix is left alone')
+            check(sum(n.startswith('rally-monte-style-') for n in names) == 1, 'exactly one current-version cache remains')
             await b.close()
     finally:
         srv.terminate()

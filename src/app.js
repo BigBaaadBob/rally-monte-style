@@ -12,8 +12,9 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtVM = v => v == null ? '' : v.toFixed(2);
 const now = () => Date.now();
-// Legacy names kept so saved rallies and API keys survive. Do not rename without a migration.
-const LS_KEY = 'rallyRT.v1', LS_KEY_API = 'rallyRT.apikey';
+const LS_KEY = 'rallyMonteStyle.v1', LS_KEY_API = 'rallyMonteStyle.apikey';
+// Keys of earlier versions are deleted unread (a stale API key must not stay in storage); there is no migration.
+for (const k of ['rallyRT.v1', 'rallyRT.apikey']) { try { localStorage.removeItem(k); } catch (e) {} }
 const APP_VERSION = (document.querySelector('meta[name="app-version"]') || {}).content || 'dev';
 // Models for reading pages with your own API key. Costs are rough per-page estimates (Nov 2026 list prices).
 const MODELS = [
@@ -278,9 +279,9 @@ function renderSetup() {
 }
 
 // ---------------------------------------------------------------- ROUTE (prep)
-let newSet = new Set();         // RIs touched by the last import (highlighted)
+let newSet = new Set();         // RI numbers touched by the last import (highlighted)
 let pages = [];                 // {file, url, state:'' | 'busy' | 'ok' | 'bad', msg}
-const OCR_PROMPT = `You are reading ONE photographed page of SCCA RoadRally (TDS, Monte Carlo style) Route Instructions. The page holds a table of numbered route instructions (RIs).
+const OCR_PROMPT = `You are reading ONE photographed page of SCCA RoadRally (TDS, Monte Carlo style) Route Instructions. The page holds a table of numbered Route Instructions; each one is an RI.
 Return ONLY a JSON array, no prose and no code fence. One object per RI row, in page order:
 {"ri": RI number as printed (number, or string like "12A"),
  "om": the official mileage (OM) column EXACTLY as printed, as a string, e.g. "2.29"; a restart is printed with a slash, e.g. "13.27/0.00" or "/0.00", and you must keep the slash part,
@@ -318,7 +319,7 @@ function renderRoute() {
     <strong>${r.rows.length} Route Instructions</strong>
     <button id="btnAdd">Add row</button><button id="btnSort">Sort by RI</button>
     <button id="btnPaste">Paste rows</button>
-    <button id="btnClearRT" class="danger" ${r.rows.length ? '' : 'disabled'}>Clear Route Instructions</button>
+    <button id="btnClearRI" class="danger" ${r.rows.length ? '' : 'disabled'}>Clear Route Instructions</button>
   </div>
   ${newSet.size ? `<div class="banner">Highlighted rows came from the last read. Check them against the paper.</div>` : ''}
   ${flags.length ? `<div class="flags">${flags.slice(0, 8).map(esc).join('<br>')}${flags.length > 8 ? `<br>…and ${flags.length - 8} more` : ''}</div>` : ''}
@@ -360,7 +361,7 @@ function renderRoute() {
     const w = document.querySelector('#v-route'); w.scrollTop = w.scrollHeight;
   };
   $('btnSort').onclick = () => { r.rows.sort((a, b) => Core.cmpRI(a.ri, b.ri)); save(r); renderRoute(); };
-  $('btnClearRT').onclick = () => confirmBox('Clear Route Instructions', `Remove all ${r.rows.length} Route Instructions from “${esc(r.name || 'this rally')}”? Completion marks and Time Allowances go too.`, 'Clear', () => {
+  $('btnClearRI').onclick = () => confirmBox('Clear Route Instructions', `Remove all ${r.rows.length} Route Instructions from “${esc(r.name || 'this rally')}”? Completion marks and Time Allowances go too.`, 'Clear', () => {
     r.rows = []; r.taEvents = []; newSet.clear(); save(r); renderRoute();
   });
   $('btnPaste').onclick = pasteRows;
@@ -753,7 +754,7 @@ function renderData() {
   };
   if ($('bKeyDel')) $('bKeyDel').onclick = () => confirmBox('Remove API key', 'Remove the saved Anthropic API key from this device?', 'Remove', () => { try { localStorage.removeItem(LS_KEY_API); } catch (e) {} renderData(); });
   $('bResetRun').onclick = () => confirmBox('Clear run data', 'Clear all completion marks, Time Allowances, and estimate locks? The Route Instructions stay.', 'Clear', () => {
-    r.rows = r.rows.map(x => ({ ...x, done: false, ttDone: null, doneAt: null, estLock: null, estLockBy: null })); r.taEvents = []; save(r); renderData();
+    r.rows = r.rows.map(x => ({ ...x, done: false, ttDone: null, doneAt: null, estLock: null })); r.taEvents = []; save(r); renderData();
   });
   $('bDup').onclick = () => {
     const nr = JSON.parse(JSON.stringify(r)); nr.id = newId(); nr.name = (r.name || 'Rally') + ' (copy)'; nr.created = nr.updated = now();
