@@ -3,7 +3,7 @@ Run from the repo root after a build:
   Windows:    .venv/Scripts/python build.py && .venv/Scripts/python test/e2e/pwa.py
   Linux/WSL:  .venv/bin/python build.py && .venv/bin/python test/e2e/pwa.py"""
 from _common import ROOT, OUT_DIR, launch_browser, check, capture_errors, run
-import json, socket, subprocess, sys, time
+import asyncio, json, socket, subprocess, sys, time
 from playwright.async_api import async_playwright
 
 PORT = 8765
@@ -29,6 +29,7 @@ def canned(n, model):
 async def main():
     srv = serve()
     calls = []
+    hook = {'delay': 0.0, 'rows': None}      # a test sets rows (and a delay) to override the canned reply for the next reads
     try:
         async with async_playwright() as p:
             b = await launch_browser(p)
@@ -37,7 +38,8 @@ async def main():
                 body = json.loads(route.request.post_data)
                 calls.append({'model': body['model'], 'max_tokens': body['max_tokens'], 'key': route.request.headers.get('x-api-key'),
                               'direct': route.request.headers.get('anthropic-dangerous-direct-browser-access')})
-                rows = canned(len(calls), body['model'])
+                rows = hook['rows'] if hook['rows'] is not None else canned(len(calls), body['model'])
+                if hook['delay']: await asyncio.sleep(hook['delay'])
                 await route.fulfill(status=200, content_type='application/json',
                                     body=json.dumps({'content': [{'type': 'text', 'text': '```json\n' + json.dumps(rows) + '\n```'}], 'stop_reason': 'end_turn'}),
                                     headers={'access-control-allow-origin': '*'})
@@ -107,6 +109,92 @@ async def main():
             check(all(c['direct'] == 'true' for c in calls), 'every API call sets anthropic-dangerous-direct-browser-access: true')
             check([c['model'] for c in calls] == ['claude-sonnet-5-5', 'claude-haiku-5-5'], 'the read uses Sonnet 5.5 and the re-read uses the selected model, Haiku 5.5')
             await pg.screenshot(path=str(OUT_DIR / 'pwa-route.png'))
+            # DESIGN § Reading pages → Page photos: photos are per rally, removable one at a time with a confirm, and reads merge into the owning rally.
+            def tagged(tag, base):
+                return [{'ri': base + k, 'om': '2.00', 'czt': None, 'cp': None, 'instr': tag, 'info': ''} for k in range(2)]
+            def png(name): return {'name': name, 'mimeType': 'image/png', 'buffer': PAGE.read_bytes()}
+            async def open_route(rid):
+                await pg.click('#tabs button[data-v=rallies]'); await pg.click(f'[data-open="{rid}"]'); await pg.click('#tabs button[data-v=route]')
+            async def modal():
+                await pg.wait_for_selector('#modal.on')
+                return await pg.inner_text('#mTitle'), (await pg.inner_text('#mOk')).strip(), await pg.inner_text('#mBody')
+            async def names(): return await pg.evaluate('pagesOf(R().id).map(p => p.file.name)')
+            async def thumbs(): return await pg.evaluate("document.querySelectorAll('.thumbs figure').length")
+            async def modal_on(): return await pg.evaluate("document.getElementById('modal').classList.contains('on')")
+            await pg.evaluate("window.__revoked = []; const o = URL.revokeObjectURL; URL.revokeObjectURL = u => { __revoked.push(u); o.call(URL, u); }")
+            A = await pg.evaluate('R().id'); A_name = await pg.evaluate("R().name || 'this rally'")
+            await pg.set_input_files('#fPages', [png('a2.png'), png('a3.png')])
+            a_names = await names()
+            check(len(a_names) == 3 and await thumbs() == 3, f'rally A shows its 3 photos ({a_names})')
+            a_rows = await pg.evaluate('R().rows')
+            await pg.click('#tabs button[data-v=rallies]'); await pg.click('#btnNew')
+            B = await pg.evaluate('R().id'); await pg.evaluate("R().name = 'Rally B'; save(R())")
+            await pg.click('#tabs button[data-v=route]')
+            check(B != A and await thumbs() == 0, "opening rally B shows none of A's photos")
+            check(await pg.is_disabled('#btnRead'), 'Read is disabled on B, which has no photos')
+            await pg.set_input_files('#fPages', [png('b1.png')])
+            hook['rows'] = tagged('b-read', 700)
+            await pg.click('#btnRead'); await modal(); await pg.click('#mOk')
+            want_b = await pg.evaluate("rows => Core.mergeRows([], rows).rows.map(r => r.ri + ':' + r.instr).join('|')", hook['rows'])
+            check(await pg.evaluate("R().rows.map(r => r.ri + ':' + r.instr).join('|')") == want_b, 'Read on B merges its page rows into B')
+            check(await pg.evaluate('ri => store.rallies[ri].rows', A) == a_rows, "Read on B leaves A's Route Instructions unchanged")
+            await open_route(A)
+            check(await names() == a_names and await thumbs() == 3, "reopening A shows A's photos again")
+            # A read started on A that finishes after B is opened merges into A only.
+            b_rows = await pg.evaluate('ri => store.rallies[ri].rows', B); b_new = await pg.evaluate('ri => [...newOf(ri)]', B)
+            hook['rows'] = tagged('a-inflight', 800); hook['delay'] = 1.0
+            await pg.click('[data-reread="0"]')
+            await open_route(B)
+            await pg.wait_for_function('readingBy.size === 0', timeout=10000); hook['delay'] = 0.0
+            title, ok, body = await modal()
+            check(body.startswith(f'“{A_name}”:'), f'the Pages read summary names the owning rally when another is open ({body[:60]!r})')
+            await pg.click('#mOk')
+            want_a = await pg.evaluate("([rows, add]) => Core.mergeRows(rows, add).rows.map(r => r.ri + ':' + r.instr).join('|')", [a_rows, hook['rows']])
+            check(await pg.evaluate("ri => store.rallies[ri].rows.map(r => r.ri + ':' + r.instr).join('|')", A) == want_a, 'the in-flight read merged into A')
+            check(await pg.evaluate('ri => store.rallies[ri].rows', B) == b_rows, "the in-flight read left B's Route Instructions unchanged")
+            check(await pg.evaluate('ri => [...newOf(ri)]', B) == b_new, "the in-flight read left B's last-read highlight unchanged")
+            check(await pg.evaluate("ri => store.rallies[ri].rows.filter(r => r.instr === 'a-inflight').every(r => newOf(ri).has(String(r.ri)))", A), "the in-flight read set A's last-read highlight")
+            await open_route(A)
+            a_rows = await pg.evaluate('R().rows'); a_new = await pg.evaluate('[...newOf(R().id)]')
+            # The remove button on a thumbnail removes one photo after a confirm.
+            await pg.click('[data-rmphoto="1"]')
+            check(await modal() == ('Remove photo', 'Remove', 'Remove this page photo? Route Instructions already read from it stay.'), 'the remove dialog title, OK label, and text')
+            await pg.click('#mCancel')
+            check(await names() == a_names, 'Cancel keeps the photo')
+            await pg.click('[data-rmphoto="1"]'); await modal()
+            await pg.mouse.click(3, 3)
+            check(await names() == a_names and not await modal_on(), 'tapping outside keeps the photo and closes the dialog')
+            gone_url = await pg.evaluate('pagesOf(R().id)[1].url')
+            await pg.click('[data-rmphoto="1"]'); await modal(); await pg.click('#mOk')
+            check(await names() == [a_names[0], a_names[2]] and await thumbs() == 2, 'Remove removes only that photo')
+            check(await pg.evaluate('u => __revoked.includes(u)', gone_url), "Remove frees the photo's object URL")
+            check(await pg.evaluate('R().rows') == a_rows and await pg.evaluate('[...newOf(R().id)]') == a_new, 'Remove leaves the Route Instructions and the highlight unchanged')
+            # Clear photos: plural, singular, Cancel.
+            urls = await pg.evaluate('pagesOf(R().id).map(p => p.url)')
+            await pg.click('#btnClearPages')
+            check(await modal() == ('Clear photos', 'Clear', f'Clear all 2 page photos from “{A_name}”? Route Instructions already read from them stay.'), 'Clear photos text with two photos')
+            await pg.click('#mCancel')
+            check(len(await names()) == 2, 'Cancel keeps all the photos')
+            await pg.click('[data-rmphoto="0"]'); await modal(); await pg.click('#mOk')
+            await pg.click('#btnClearPages')
+            check(await modal() == ('Clear photos', 'Clear', f'Clear the 1 page photo from “{A_name}”? Route Instructions already read from it stay.'), 'Clear photos text with one photo')
+            await pg.click('#mOk')
+            check(await names() == [] and await pg.query_selector('#btnClearPages') is None, 'Clear removes the photos and the button goes away')
+            check(await pg.evaluate('us => us.every(u => __revoked.includes(u))', urls), 'Clear frees the object URLs')
+            check(await pg.evaluate('R().rows') == a_rows and await pg.evaluate('[...newOf(R().id)]') == a_new, 'Clear leaves the Route Instructions and the highlight unchanged')
+            # Delete rally drops its photos; the remaining rally shows only its own.
+            await pg.set_input_files('#fPages', [png('a-del.png')])
+            a_url = await pg.evaluate('pagesOf(R().id)[0].url')
+            await pg.click('#tabs button[data-v=data]'); await pg.click('#bDel'); await modal(); await pg.click('#mOk')
+            check(await pg.evaluate('([a, u]) => !(a in pagesByRally) && __revoked.includes(u)', [A, a_url]), "Delete rally drops the rally's photos and frees their URLs")
+            await open_route(B)
+            check(await names() == ['b1.png'] and await thumbs() == 1, "the remaining rally shows only its own photo, none of A's")
+            # Delete rally while one of its reads is running: the rows are discarded, with no message and no error.
+            hook['rows'] = tagged('b-late', 900); hook['delay'] = 1.0
+            await pg.click('[data-reread="0"]')
+            await pg.click('#tabs button[data-v=data]'); await pg.click('#bDel'); await modal(); await pg.click('#mOk')
+            await pg.wait_for_function('readingBy.size === 0', timeout=10000); hook['delay'] = 0.0; hook['rows'] = None
+            check(not await modal_on() and B not in await pg.evaluate('Object.keys(store.rallies)'), 'deleting a rally during its read discards the rows with no message')
             # DESIGN § Hosting and install: a new version shows a banner and is applied only when the user taps Reload.
             subprocess.run([sys.executable, str(ROOT / 'build.py')], check=True, stdout=subprocess.DEVNULL)
             await pg.evaluate('navigator.serviceWorker.getRegistration().then(r => r.update())')
