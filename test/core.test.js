@@ -319,49 +319,7 @@ assert.strictEqual(Core.parseOCR('no JSON here at all').length, 0, 'prose with n
   assert.strictEqual(Core.toCSV(R1, 'hms').split(String.fromCharCode(10)).find(l => l.startsWith('OCF,')), 'OCF,' + (1).toFixed(4), 'OCF 1 is written as four decimals');
   assert.strictEqual(Core.fmtOCF(''), '', 'a blank OCF stays blank'); }
 
-// Page images (DESIGN § Reading pages → Page images): band finding on a synthetic ruled page, drawn here from
-// invented content. Row heights vary about 10:1; the first ruled band is the column headings.
-{ const W = 400, H = 1000, data = new Uint8Array(W * H).fill(255);
-  const rules = [20, 60, 90, 390, 450, 480, 600, 640];                       // heading band 20-60, then 6 rows
-  const T = 3;                                                                // rule thickness
-  const vx = [10, 40, 80, 120, 160, 260, 390];                                // 7 column rules: Instruction starts at 160
-  for (const r of rules) for (let t = 0; t < T; t++) for (let x = vx[0]; x < vx[vx.length - 1] + T; x++) data[(r + t) * W + x] = 0;
-  for (const x of vx) for (let t = 0; t < T; t++) for (let y = rules[0]; y < rules[rules.length - 1] + T; y++) data[y * W + x + t] = 0;
-  for (let y = 100; y < 380; y++) for (let x = 200; x < 300; x++) data[y * W + x] = 30;   // a dark "photo" in row 2 (not a rule)
-  const img = { data, w: W, h: H };
-  const mid = i => (rules[i] + T + rules[i + 1]) / 2 / H;                     // y of band i's centre
-  const band = i => ({ top: (rules[i] + T) / H, bottom: rules[i + 1] / H });
-  const close = (b, i, msg) => { near(b.top, band(i).top, 0.0002, msg + ' top'); near(b.bottom, band(i).bottom, 0.0002, msg + ' bottom'); };
-  // columns: from the Instruction column's left rule to the table's right edge
-  const b1 = Core.findBand(img, 1, mid(1));
-  close(b1, 1, 'row 1'); near(b1.left, (vx[4] + T) / W, 0.0002, 'left'); near(b1.right, vx[6] / W, 0.0002, 'right'); assert.ok(!b1.check);
-  // heights vary about 10:1 (band 2 is 300 px, band 4 is 30 px)
-  assert.ok((rules[3] - rules[2]) / (rules[5] - rules[4]) >= 9);
-  // row and y agree, whatever the band's height
-  for (const i of [1, 2, 3, 4, 5, 6]) if (i + 1 < rules.length) { const b = Core.findBand(img, i, mid(i)); close(b, i, 'row ' + i); assert.ok(!b.check, 'agree, no flag'); }
-  // y wins with a flag when it falls in another band
-  const bw = Core.findBand(img, 3, mid(5)); close(bw, 5, 'y wins'); assert.strictEqual(bw.check, true);
-  // row beyond the last band: y decides, flagged
-  const bo = Core.findBand(img, 20, mid(2)); close(bo, 2, 'row out of range'); assert.strictEqual(bo.check, true);
-  // y alone, row alone
-  close(Core.findBand(img, null, mid(4)), 4, 'y only'); close(Core.findBand(img, 4, undefined), 4, 'row only');
-  // y in the heading band or outside the table: the row decides
-  close(Core.findBand(img, 2, 40 / H), 2, 'y in headings');
-  // a continuation fragment at the top is band 1 and counted: the first returned row says row 2
-  close(Core.findBand(img, 2, mid(2)), 2, 'continuation counted');
-  // missing or invalid fields: no band
-  for (const [r, y] of [[null, null], [undefined, undefined], [0, 2], [-1, -0.1], [1.5, 'x'], ['2', NaN], [NaN, Infinity]])
-    assert.strictEqual(Core.findBand(img, r, y), null, `invalid ${r}/${y}`);
-  assert.strictEqual(Core.findBand(img, 20, null), null, 'row beyond the table and no y: no band');
-  // too few rules: centred on y with a fixed margin, spanning the table
-  const blank = { data: new Uint8Array(W * H).fill(255), w: W, h: H };
-  const bf = Core.findBand(blank, 5, 0.5);
-  assert.ok(bf && !bf.check); near((bf.top + bf.bottom) / 2, 0.5, 0.0002, 'centred on y'); near(bf.bottom - bf.top, 0.08, 0.0002, 'fixed margin');
-  assert.strictEqual(Core.findBand(blank, 5, null), null, 'too few rules and no y');
-  const edge = Core.findBand(blank, null, 0.01); assert.strictEqual(edge.top, 0, 'clamped at the page top');
-  // fractions have at most four decimals and stay within 0-1
-  for (const b of [b1, bw, bf]) for (const k of ['top', 'bottom', 'left', 'right']) { assert.ok(b[k] >= 0 && b[k] <= 1); assert.strictEqual(b[k], Math.round(b[k] * 1e4) / 1e4); }
-}
+// Band finding is in src/vision.js and is tested in test/vision.test.js.
 // band on a row: kept by normRow only when valid; mergeRows (Re-read) replaces it only with a valid new one
 { const good = { page: 'p1', top: 0.1, bottom: 0.2, left: 0.4, right: 0.95 };
   assert.deepStrictEqual(Core.normRow({ ri: 1, band: good }).band, good);
@@ -381,6 +339,75 @@ assert.strictEqual(Core.parseOCR('no JSON here at all').length, 0, 'prose with n
   assert.deepStrictEqual(Core.pagesUsed([]), []);
   assert.deepStrictEqual(Core.pagesUsed(Core.mergeRows([], [{ ri: 1 }]).rows), [], 'no bands, no copies');
   assert.ok(!Core.toCSV({ ...SAMPLE.rally, rows: old, taEvents: [] }, 'hms').includes('p1'), 'CSV has no image data'); }
+// band fields: src and the two flags are kept only when valid; a band read before src existed has none
+{ const good = { page: 'p1', top: 0.1, bottom: 0.2, left: 0.4, right: 0.95 };
+  for (const src of ['rules', 'y', 'fallback', 'row']) assert.strictEqual(Core.normRow({ ri: 1, band: { ...good, src } }).band.src, src, src);
+  assert.ok(!('src' in Core.normRow({ ri: 1, band: { ...good, src: 'guess' } }).band), 'an unknown src is dropped');
+  assert.ok(!('src' in Core.normRow({ ri: 1, band: good }).band), 'an old band has no src');
+  assert.strictEqual(Core.normRow({ ri: 1, band: { ...good, pageCheck: true } }).band.pageCheck, true);
+  assert.ok(!('pageCheck' in Core.normRow({ ri: 1, band: good }).band) && !('check' in Core.normRow({ ri: 1, band: good }).band)); }
+// sign images on a row (DESIGN § Sign images): an ordered list of ids; Re-read replaces them with a new band and keeps them with the old one
+{ const good = { page: 'p1', top: 0.1, bottom: 0.2, left: 0.4, right: 0.95 };
+  assert.deepStrictEqual(Core.normRow({ ri: 1 }).signs, [], 'no images by default');
+  assert.deepStrictEqual(Core.normRow({ ri: 1, signs: ['s1', 's2'] }).signs, ['s1', 's2']);
+  for (const bad of [null, 'x', 5, {}, [null, 3, '']]) assert.deepStrictEqual(Core.normRow({ ri: 1, signs: bad }).signs, [], JSON.stringify(bad));
+  const old = Core.mergeRows([], [{ ri: 1, om: '1', instr: 'a', band: good, signs: ['s1'] }, { ri: 2, om: '2', instr: 'b', band: { ...good, page: 'p2' }, signs: ['s2', 's3'] }]).rows;
+  const keep = Core.mergeRows(old, [{ ri: 1, om: '1.5', instr: 'a2' }]).rows;
+  assert.deepStrictEqual(keep[0].signs, ['s1'], 'no new band: the old band keeps its images');
+  assert.deepStrictEqual(keep[1].signs, ['s2', 's3'], 'rows not returned keep their images');
+  const rep = Core.mergeRows(old, [{ ri: 1, om: '1', instr: 'a', band: { ...good, page: 'p3' }, signs: ['s9'] }]).rows;
+  assert.deepStrictEqual(rep[0].signs, ['s9'], 'a new band brings its own images');
+  const none = Core.mergeRows(old, [{ ri: 1, om: '1', instr: 'a', band: { ...good, page: 'p3' } }]).rows;
+  assert.deepStrictEqual(none[0].signs, [], 'a new band with no graphic found drops the old images');
+  assert.deepStrictEqual(Core.pagesUsed(old).sort(), ['p1', 'p2', 's1', 's2', 's3'], 'sign images are used ids too');
+  assert.deepStrictEqual(Core.pagesUsed(rep).sort(), ['p2', 'p3', 's2', 's3', 's9'], 's1 is no longer used, so it is freed');
+  assert.deepStrictEqual(Core.pagesUsed(Core.mergeRows([], [{ ri: 1, signs: ['s1'] }]).rows), ['s1'], 'images without a band are still used');
+  assert.ok(!Core.toCSV({ ...SAMPLE.rally, rows: old, taEvents: [] }, 'hms').includes('s2'), 'CSV has no image ids'); }
+// image flags (DESIGN § Flags): a row read from a page with no band is flagged and sits inside the page flag's range
+{ const bd = (page, extra) => ({ page, top: 0.1, bottom: 0.2, left: 0.1, right: 0.9, src: 'fallback', check: true, ...extra });
+  const rows = [{ ri: 40, imgCheck: 'pgA' }, { ri: 41, band: bd('pgA', { pageCheck: true }) }, { ri: 42, band: bd('pgA', { pageCheck: true }) }, { ri: 51, band: bd('pgA', { pageCheck: true }) }, { ri: 52, band: bd('pgB', { src: 'rules' }) }, { ri: 53, band: bd('pgB', { check: false }) }]
+    .map(r => Core.normRow({ om: '1', ...r }));
+  assert.strictEqual(rows[0].imgCheck, 'pgA', 'the flag is stored on the row and survives normalising (a reload)');
+  assert.strictEqual(Core.normRow({ ri: 1, imgCheck: 5 }).imgCheck, null, 'an invalid page id is dropped');
+  assert.strictEqual(Core.normRow(JSON.parse(JSON.stringify(rows[0]))).imgCheck, 'pgA', 'JSON round trip');
+  let f = Core.imageFlags(rows, () => true);
+  assert.deepStrictEqual(f[0], ['RI 40–51: check page images'], 'the page flag starts at the row with no band');
+  assert.deepStrictEqual(f[1], [], 'the other rows of the page carry only the page flag');
+  assert.deepStrictEqual(f[4], ['RI 52: check page image'], 'a checked band on a page whose headings held is flagged alone');
+  assert.deepStrictEqual(f[5], []);
+  // the row with no band is in the middle or last: the range still covers it
+  assert.deepStrictEqual(Core.imageFlags([rows[1], { ...rows[0], ri: 45 }, rows[3]].map(r => Core.normRow(r)), () => true).flat(), ['RI 41–51: check page images']);
+  assert.deepStrictEqual(Core.imageFlags([rows[1], rows[2], Core.normRow({ ri: 60, imgCheck: 'pgA' })], () => true).flat(), ['RI 41–60: check page images']);
+  // a row with no band on a page whose headings held is flagged on its own
+  assert.deepStrictEqual(Core.imageFlags([Core.normRow({ ri: 7, imgCheck: 'pgC' }), rows[4]], () => true)[0], ['RI 7: check page image']);
+  // a row with no band and no page (typed in, or imported) is not flagged
+  assert.deepStrictEqual(Core.imageFlags([Core.normRow({ ri: 8 })], () => true), [[]]);
+  // a missing page copy is reported once per band row; unknown (still loading) is not
+  assert.deepStrictEqual(Core.imageFlags([rows[4]], id => id !== 'pgB')[0], ['RI 52: page image missing']);
+  assert.deepStrictEqual(Core.imageFlags([rows[4]], null)[0], ['RI 52: check page image']); }
+// the reader's page-level rotation (DESIGN § Reading pages): clockwise degrees to upright; missing or invalid means 0
+assert.strictEqual(Core.parseRotation('{"rotation": 180, "rows": []}'), 180);
+assert.strictEqual(Core.parseRotation('```json' + String.fromCharCode(10) + '{"rotation":90,"rows":[{"ri":1}]}' + String.fromCharCode(10) + '```'), 90);
+assert.strictEqual(Core.parseRotation('{ "rotation" : 270 }'), 270);
+for (const bad of ['', null, undefined, '[{"ri":1}]', '{"rotation": 45}', '{"rotation": "180"}', '{"rotation": -90}', '{"rotation": 360}', '{"rotation": 180.5}', '{"rotation": null}'])
+  assert.strictEqual(Core.parseRotation(bad), 0, String(bad));
+assert.deepStrictEqual(Core.parseOCR('{"rotation": 180, "rows": [{"ri": 1, "om": "1.5", "instr": "L [sign: x]"}]}').map(r => r.ri), [1], 'the rows are found inside the reply object');
+assert.deepStrictEqual(Core.parseOCR('[{"ri": 7}]').map(r => r.ri), [7], 'a bare array still reads');
+// laying out an instruction with its sign images (rule 14): tags take their images in order only when the counts agree
+{ const sp = (t, n) => Core.signParts(t, n);
+  let r = sp('CHECKPOINT at [sign: deer crossing] then [sign: 40 mph]', 2);
+  assert.deepStrictEqual(r.parts, [{ t: 'text', s: 'CHECKPOINT at ' }, { t: 'tag', s: 'deer crossing', img: 0 }, { t: 'text', s: ' then ' }, { t: 'tag', s: '40 mph', img: 1 }]);
+  assert.deepStrictEqual(r.after, [], 'all tags replaced: nothing follows');
+  r = sp('Turn at [sign: stop]', 1); assert.strictEqual(r.parts[1].img, 0); assert.deepStrictEqual(r.after, []);
+  r = sp('A [sign: x] B [sign: y]', 1);
+  assert.deepStrictEqual(r.parts.filter(p => p.t === 'tag').map(p => p.img), [-1, -1], 'counts differ: no tag is replaced');
+  assert.deepStrictEqual(r.after, [0], 'counts differ: the images follow the text');
+  r = sp('A [sign: x] B', 3); assert.deepStrictEqual(r.after, [0, 1, 2]); assert.strictEqual(r.parts[1].img, -1);
+  r = sp('A [sign: x] B', 0); assert.strictEqual(r.parts[1].img, -1, 'no images: the tag is a placeholder'); assert.deepStrictEqual(r.after, []);
+  r = sp('plain text', 2); assert.deepStrictEqual(r.parts, [{ t: 'text', s: 'plain text' }]); assert.deepStrictEqual(r.after, [0, 1], 'tags edited away: images follow the text');
+  r = sp('[sign: only]', 1); assert.deepStrictEqual(r.parts, [{ t: 'tag', s: 'only', img: 0 }], 'a tag alone, no empty text around it');
+  r = sp('x [SIGN:  spaced  ] y', 1); assert.strictEqual(r.parts[1].s, 'spaced'); assert.strictEqual(r.parts[1].img, 0);
+  assert.deepStrictEqual(sp(null, 0).parts, []); assert.deepStrictEqual(sp('', 0), { parts: [], after: [] }); }
 
 // Guard (DESIGN § Testing): the built page makes no claude.ai artifact-runtime calls. Needs `python build.py` first.
 { const fs = require('fs'), path = require('path');

@@ -167,34 +167,24 @@ body.focus .ac-head{padding-right:34px}
   header{padding:3px 10px} nav button{min-height:32px} nav .phase{display:none} .view{padding:6px 8px}
   .ac-btns button{min-height:46px} .ac-next{display:none} .ac-instr{font-size:15px} .ac-info{font-size:13px}
   .ac-nums{margin:2px 0} .ac-nums .big{font-size:clamp(26px,4.2vw,40px)} .active-card{padding:8px 10px}
+  .ac-instr .sgimg{max-height:22px} .ac-instr .sgafter{display:inline;margin:0} .ac-instr .sgph{line-height:1.2}
 }
 @media (orientation:portrait) and (max-height:760px){ .ac-next{display:none} .ac-instr{font-size:15px} }
 
-/* page images (DESIGN § Run, Route editor) */
-.pgimg{display:block;cursor:zoom-in;border:1px solid var(--line);border-radius:6px;background:#fff;object-fit:contain;object-position:left center}
-html[data-theme="night"] .pgimg, html[data-theme="night"] #imgFull{filter:brightness(.6)}
+/* sign images and the Page control (DESIGN § Sign images) */
+.sgimg{display:inline-block;vertical-align:middle;max-width:100%;height:auto;max-height:44px;border:1px solid var(--line);border-radius:4px;background:#fff;cursor:zoom-in;margin:1px 2px}
+.ac-img{max-height:76px}
+.rt-img{max-height:64px}
+html[data-theme="night"] .sgimg, html[data-theme="night"] #imgFull{filter:brightness(.6)}
+.sgph{display:inline-block;vertical-align:middle;max-width:100%;border:1px dashed var(--line);border-radius:4px;padding:0 6px;margin:1px 2px;color:var(--muted);font-size:.85em;line-height:1.5}
+.sgafter{margin-top:3px}
+.pgbtn{min-height:26px;padding:1px 10px;font-size:12px;margin:2px 4px 2px 0}
+tr.pgrow td{padding-top:0;border-top:0}
 .ac-main{display:flex;flex-direction:column;gap:6px}
 .ac-lead{min-width:0}
-.ac-img{width:100%;max-width:var(--nw,100%);max-height:min(120px,var(--nh,120px))}
-.rt-img{width:100%;max-width:min(var(--nw,100%),700px);max-height:220px}
-tr.pgrow td{padding-top:0;border-top:0}
 #imgView{position:fixed;inset:0;background:#000;display:none;align-items:center;justify-content:center;z-index:70;padding:8px}
 #imgView.on{display:flex}
 #imgFull{max-width:100%;max-height:100%;object-fit:contain}
-@media (orientation:landscape){
-  .ac-main{flex-direction:row;align-items:flex-start;gap:8px}
-  .ac-lead{flex:1}
-  .ac-main.has-img .ac-nums{grid-template-columns:auto 1fr;gap:12px}
-  .ac-main.has-img .ac-nums .big{font-size:24px}
-  .active-card.hasimg{padding:6px 10px}
-  .active-card.hasimg .ac-nums{margin:0}
-  .active-card.hasimg .ac-instr{font-size:14px;line-height:1.2}
-  .active-card.hasimg .ac-info{font-size:12px;line-height:1.2}
-  .active-card.hasimg .ac-btns{margin-top:6px}
-  .active-card.hasimg + .ctl{margin-top:4px}
-  .ac-media{flex:0 1 auto;max-width:40%}
-  .ac-img{max-height:min(110px,var(--nh,110px));object-position:center}
-}
 /* dialog + toast */
 #modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;z-index:50;padding:20px}
 #modal.on{display:flex}
@@ -262,6 +252,9 @@ pre.io{white-space:pre-wrap;word-break:break-word;max-height:160px;overflow:auto
 
 <script data-rt>
 /*CORE*/
+</script>
+<script data-rt>
+/*VISION*/
 </script>
 <script data-rt>
 /*SAMPLE*/
