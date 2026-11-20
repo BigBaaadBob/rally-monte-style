@@ -79,79 +79,67 @@
       done: !!x.done, ttDone: x.ttDone ?? null, doneAt: x.doneAt ?? null,
       estLock: x.estLock ?? null,
       band: normBand(x.band),
+      signs: normSigns(x.signs),
+      imgCheck: typeof x.imgCheck === 'string' && x.imgCheck ? x.imgCheck : null,
     };
   }
 
-  // ---------- page images (DESIGN § Reading pages → Page images) ----------
-  // A band is {page, top, bottom, left, right}: a page copy id and fractions (0-1) of that copy.
-  // check:true marks a band where the reader's y overrode its row (flagged on Route).
+  // ---------- page images (DESIGN § Reading pages → Page images, Sign images) ----------
+  // A band is {page, top, bottom, left, right, src, check?, pageCheck?}: a page copy id and fractions (0-1) of that copy.
+  // src says how it was found (rules, y, fallback, row); bands read before src existed have none.
+  // check:true marks a band to look at (flagged on Route); pageCheck:true marks the rows of a page whose headings were moved.
+  const SRC = ['rules', 'y', 'fallback', 'row'];
   function normBand(b) {
     if (!b || typeof b !== 'object' || typeof b.page !== 'string' || !b.page) return null;
     const f = v => typeof v === 'number' && isFinite(v) && v >= 0 && v <= 1;
     if (![b.top, b.bottom, b.left, b.right].every(f) || !(b.top < b.bottom) || !(b.left < b.right)) return null;
     const out = { page: b.page, top: b.top, bottom: b.bottom, left: b.left, right: b.right };
+    if (SRC.includes(b.src)) out.src = b.src;
     if (b.check) out.check = true;
+    if (b.pageCheck) out.pageCheck = true;
     return out;
   }
-  const pagesUsed = rows => [...new Set(rows.map(x => x.band && x.band.page).filter(Boolean))];
+  // The ordered ids of a row's sign images (page copies' sibling records in IndexedDB).
+  const normSigns = a => Array.isArray(a) ? a.filter(v => typeof v === 'string' && v) : [];
+  // Every stored image id the rows refer to: page copies and sign images.
+  const pagesUsed = rows => [...new Set(rows.flatMap(x => [x.band && x.band.page, ...(x.signs || [])]).filter(Boolean))];
 
-  // Heavy full-width row rules and full-height column rules in a grayscale image {data, w, h}.
-  function findRules(img) {
-    const { data, w, h } = img, DARK = 110;
-    const hs = [];                                   // [start,end] pixel rows that are rule lines
-    let x0 = w, x1 = 0;
-    for (let y = 0; y < h; y++) {
-      let best = 0, bs = 0, run = 0, rs = 0;
-      for (let x = 0; x < w; x++) {
-        if (data[y * w + x] < DARK) { if (!run) rs = x; run++; if (run > best) { best = run; bs = rs; } } else run = 0;
+  // Image flags for the Route screen (DESIGN § Flags). A row read from a page but left with no band carries imgCheck: that page copy's id.
+  // pageOk(id) says whether a page copy is stored (null/undefined: not known yet). Returns one array of flag texts per row.
+  // The page flag (RI a–b: check page images) runs from the first to the last row read from a page whose headings were moved,
+  // rows with no band included.
+  function imageFlags(rows, pageOk) {
+    const pageOf = x => x.band ? x.band.page : x.imgCheck || null;
+    const moved = new Set(rows.filter(x => x.band && x.band.pageCheck).map(x => x.band.page));
+    const inRange = (x, p) => pageOf(x) === p && (x.band ? !!x.band.pageCheck : true);
+    const seen = new Set();
+    return rows.map(x => {
+      const f = [], p = pageOf(x);
+      if (x.band && pageOk && pageOk(x.band.page) === false) f.push(`RI ${x.ri}: page image missing`);
+      else if (x.band ? x.band.check && !x.band.pageCheck : x.imgCheck && !moved.has(x.imgCheck)) f.push(`RI ${x.ri}: check page image`);
+      if (p && moved.has(p) && inRange(x, p) && !seen.has(p)) {
+        seen.add(p);
+        const mine = rows.filter(y => inRange(y, p));
+        f.push(`RI ${mine.length > 1 ? mine[0].ri + '–' + mine[mine.length - 1].ri : mine[0].ri}: check page images`);
       }
-      if (best >= 0.7 * w) { hs.push(y); x0 = Math.min(x0, bs); x1 = Math.max(x1, bs + best); }
-    }
-    const group = idx => {                           // consecutive indices (gap of 1 allowed) -> [{s, e}]
-      const out = [];
-      for (const i of idx) { const g = out[out.length - 1]; if (g && i - g.e <= 2) g.e = i; else out.push({ s: i, e: i }); }
-      return out;
-    };
-    const hr = group(hs);
-    let vr = [];
-    if (hr.length >= 2) {
-      const y0 = hr[0].s, y1 = hr[hr.length - 1].e, span = y1 - y0 + 1, vs = [];
-      for (let x = 0; x < w; x++) {
-        let c = 0;
-        for (let y = y0; y <= y1; y++) if (data[y * w + x] < DARK) c++;
-        if (c >= 0.7 * span) vs.push(x);
-      }
-      vr = group(vs);
-    }
-    return { hr, vr, x0: hs.length ? x0 : null, x1: hs.length ? x1 : null };
+      return f;
+    });
   }
 
-  // The image band for one reader row, or null (no image). img = {data: gray bytes, w, h}; row and y as the
-  // reader returned them (invalid or missing values are ignored). The first ruled band is the column headings,
-  // so row n is the nth ruled band after it. Returns {top, bottom, left, right, check}, fractions to 4 decimals.
-  function findBand(img, row, y) {
-    const okRow = Number.isInteger(row) && row > 0;
-    const okY = typeof y === 'number' && isFinite(y) && y >= 0 && y <= 1;
-    if (!okRow && !okY) return null;
-    const q = v => Math.round(Math.min(1, Math.max(0, v)) * 10000) / 10000;
-    const { w, h } = img;
-    const R = findRules(img), hr = R.hr, vr = R.vr;
-    const x0 = R.x0 != null ? R.x0 : 0.05 * w, x1 = R.x1 != null ? R.x1 : 0.95 * w;
-    const left = vr.length >= 3 ? vr[vr.length - 3].e + 1 : x0 + 0.4 * (x1 - x0);
-    const right = vr.length >= 3 ? vr[vr.length - 1].s : x1;
-    const out = (top, bottom, check) => (bottom > top && right > left)
-      ? { top: q(top / h), bottom: q(bottom / h), left: q(left / w), right: q(right / w), check: !!check } : null;
-    if (hr.length >= 3) {
-      const bandAt = yy => { for (let i = 1; i < hr.length - 1; i++) if (yy >= hr[i].e + 1 && yy < hr[i + 1].s) return i; return -1; };
-      const rowBand = okRow && row < hr.length - 1 ? row : -1;
-      const yBand = okY ? bandAt(y * h) : -1;
-      const i = yBand >= 0 ? yBand : rowBand;
-      if (i >= 1) return out(hr[i].e + 1, hr[i + 1].s, okRow && yBand >= 0 && rowBand !== yBand);
-      if (!okY) return null;                         // row names a band that is not there and y gives none
-    }
-    if (!okY) return null;                           // too few rules and no y
-    const M = 0.04 * h;                              // fixed margin each side of y
-    return out(Math.max(0, y * h - M), Math.min(h, y * h + M), false);
+  // Rule 14: how an instruction and its sign images are laid out. Returns {parts, after}. parts are {t:'text', s} and
+  // {t:'tag', s: the tag's words, img: index of its image or -1}; after lists the image indexes shown after the text.
+  // If the images are as many as the [sign: …] tags, each tag takes its image in order; otherwise no tag is replaced.
+  function signParts(instr, nImgs) {
+    const re = /\[sign:\s*([^\]]*)\]/gi, text = String(instr == null ? '' : instr), tags = [];
+    for (let m; (m = re.exec(text));) tags.push({ at: m.index, end: re.lastIndex, s: m[1].trim() });
+    const swap = nImgs > 0 && nImgs === tags.length, parts = [];
+    let pos = 0;
+    tags.forEach((g, i) => {
+      if (g.at > pos) parts.push({ t: 'text', s: text.slice(pos, g.at) });
+      parts.push({ t: 'tag', s: g.s, img: swap ? i : -1 }); pos = g.end;
+    });
+    if (pos < text.length) parts.push({ t: 'text', s: text.slice(pos) });
+    return { parts, after: swap ? [] : Array.from({ length: nImgs }, (_, i) => i) };
   }
 
   // Merge by RI (new data replaces old text; completion state is kept), then sort.
@@ -164,7 +152,7 @@
       const i = out.findIndex(o => sameRI(o.ri, r.ri));
       if (i >= 0) {
         const o = out[i];
-        out[i] = { ...r, done: o.done, ttDone: o.ttDone, doneAt: o.doneAt, estLock: o.estLock, band: r.band || o.band };
+        out[i] = { ...r, done: o.done, ttDone: o.ttDone, doneAt: o.doneAt, estLock: o.estLock, band: r.band || o.band, signs: r.band ? r.signs : o.signs };   // Re-read: a new band brings its own images (even none); an old band keeps its images
         replaced++;
       } else { out.push(r); added++; }
     }
@@ -359,8 +347,14 @@
     return out;
   }
 
+  // The reader's page-level rotation (clockwise degrees to upright); anything but 0, 90, 180, or 270 is 0 (DESIGN § Reading pages).
+  function parseRotation(text) {
+    const m = String(text || '').match(/"rotation"\s*:\s*(-?\d+(?:\.\d+)?)/);
+    return m && [0, 90, 180, 270].includes(+m[1]) ? +m[1] : 0;
+  }
+
   const Core = { parseTOD, fmtTOD, parseTA, fmtTA, TA_MAX, cmpRI, sameRI, normRow, mergeRows, compute, activeIndex, legOf,
-    setTA, renameRI, completeActive, CLOSE_MI, closeMi, fmtOCF, uncomplete, lastCompleted, toCSV, parseCSV, parseOCR,
-    normBand, pagesUsed, findBand };
+    setTA, renameRI, completeActive, CLOSE_MI, closeMi, fmtOCF, uncomplete, lastCompleted, toCSV, parseCSV, parseOCR, parseRotation,
+    normBand, normSigns, pagesUsed, signParts, imageFlags };
   if (typeof module !== 'undefined' && module.exports) module.exports = Core; else root.Core = Core;
 })(typeof window !== 'undefined' ? window : globalThis);

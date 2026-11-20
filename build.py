@@ -19,7 +19,7 @@ def version():
 
 VERSION = version()
 html = (d / 'src/app.html').read_text(encoding='utf-8')
-for tag, f in (('/*CORE*/', 'src/core.js'), ('/*SAMPLE*/', 'src/sample.js'), ('/*APP*/', 'src/app.js')):
+for tag, f in (('/*CORE*/', 'src/core.js'), ('/*VISION*/', 'src/vision.js'), ('/*SAMPLE*/', 'src/sample.js'), ('/*APP*/', 'src/app.js')):
     code = (d / f).read_text(encoding='utf-8')
     assert '</script' not in code.lower(), f
     html = html.replace(tag, code, 1)

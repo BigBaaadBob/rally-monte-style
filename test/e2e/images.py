@@ -1,6 +1,7 @@
-"""Page images (issue #6): band from the reader's row/y, page copies in IndexedDB, Run card and Route images,
-tap to expand, Data line, freeing, JSON import/Duplicate, and the two failure paths. The Anthropic API is mocked
-and the page is a synthetic ruled table drawn in the browser from invented content (no real pages).
+"""Page and sign images (issues #6 and #66): bands from the reader's row/y, the page copy and sign images in IndexedDB,
+inline sign images on Route and Run, the Page control, tap to expand, Data line, lifecycle (edit, Delete row, Clear, Re-read,
+Duplicate, JSON import, Delete rally), orientation, and the two failure paths. The Anthropic API is mocked and the page is a
+synthetic ruled table drawn in the browser from invented content (no real pages).
 Run from the repo root after a build:
   Windows:    .venv/Scripts/python build.py && .venv/Scripts/python test/e2e/images.py
   Linux/WSL:  .venv/bin/python build.py && .venv/bin/python test/e2e/images.py
@@ -9,40 +10,63 @@ from _common import APP_URL, OUT_DIR, LAYOUTS, launch_browser, check, capture_er
 import asyncio, base64, json, re
 from playwright.async_api import async_playwright
 
-# A ruled page: heading band, then rows of very different heights (short, sign, tall photo, short, short).
-DRAW = """() => {
-  const W = 800, H = 1200, T = 4, hs = [40, 36, 90, 420, 36, 40];            // heading + 5 rows
-  const vx = [20, 70, 120, 190, 400, 590, 780];                              // 7 rules: Instruction starts at vx[4]
-  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
-  const c = cv.getContext('2d'); c.fillStyle = '#fff'; c.fillRect(0, 0, W, H); c.fillStyle = '#000';
-  const rules = []; let y = 20;
-  for (const h of hs) { rules.push(y); y += T + h; } rules.push(y);
-  for (const r of rules) c.fillRect(vx[0], r, vx[6] + T - vx[0], T);
-  for (const x of vx) c.fillRect(x, rules[0], T, rules[rules.length - 1] + T - rules[0]);
-  c.fillStyle = '#444'; c.font = '14px sans-serif';
-  rules.slice(0, -1).forEach((r, i) => c.fillText(i ? 'Row ' + i + ' sample text' : 'RI  OM  CZT  Target  Instruction  Info', 430, r + T + 16));
-  c.fillStyle = '#c00'; c.beginPath(); c.arc(480, rules[2] + T + 50, 30, 0, 7); c.fill();           // a "sign"
-  const g = c.createLinearGradient(0, rules[3], 0, rules[3] + 400); g.addColorStop(0, '#2a7'); g.addColorStop(1, '#27a');
-  c.fillStyle = g; c.fillRect(420, rules[3] + T + 24, 160, 360);                                    // a "photo"
-  const centre = n => (rules[n] + T + hs[n] / 2) / H;
-  return { b64: cv.toDataURL('image/jpeg', 0.92).split(',')[1], W, H, T, rules, hs, vx, ys: [1, 2, 3, 4, 5].map(centre) };
+# A ruled page (logical 1000 x 1650, drawn at 2x so the page copy is smaller than the original): a heading band, then rows of very
+# different heights, with drawn signs in the Instruction cell: row 2 one sign, row 4 two side by side, row 5 none (a tag only),
+# row 6 one graphic for two tags, row 7 and 8 short.  turn: 0 upright, 180 upside down, 90 page turned a quarter clockwise.
+DRAW = """(turn) => {
+  const PW = 1000, PH = 1650, K = 2, T = 3, vx = [60, 110, 170, 240, 300, 360, 700, 940], hs = [50, 90, 300, 60, 160, 75, 170, 30, 200];
+  const cv = document.createElement('canvas'); cv.width = PW * K; cv.height = PH * K;
+  const c = cv.getContext('2d'); c.scale(K, K); c.fillStyle = '#fff'; c.fillRect(0, 0, PW, PH); c.fillStyle = '#000'; c.strokeStyle = '#000';
+  const rules = [220]; for (const h of hs) rules.push(rules[rules.length - 1] + h);
+  for (const r of rules) c.fillRect(vx[0], r, vx[7] - vx[0] + T, T);
+  for (const x of vx) c.fillRect(x, rules[0], T, rules[rules.length - 1] - rules[0] + T);
+  let seed = 7; const rnd = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
+  const letters = (x0, y0, wmax) => { let x = x0; while (x + 7 < x0 + wmax) { c.fillRect(x, y0, 7, 14); x += 11; } };
+  const boxes = {};
+  for (let k = 1; k < hs.length; k++) {
+    const y0 = rules[k] + T;
+    for (let col = 0; col < 7; col++) if (col !== 5) letters(vx[col] + 10, y0 + 12, Math.min(60, vx[col + 1] - vx[col] - 20));
+    letters(vx[5] + 12, y0 + 12, 150);
+  }
+  const diamond = (x, y) => { const cx = x + 40, cy = y + 30; c.lineWidth = 4; c.beginPath(); c.moveTo(cx, cy - 30); c.lineTo(cx + 30, cy); c.lineTo(cx, cy + 30); c.lineTo(cx - 30, cy); c.closePath(); c.stroke();
+    c.fillRect(cx - 25, cy + 32, 50, 22); c.fillStyle = '#fff'; for (let i = 0; i < 4; i++) c.fillRect(cx - 20 + i * 11, cy + 36, 7, 14); c.fillStyle = '#000'; return [cx - 32, cy - 32, cx + 32, cy + 54]; };
+  const rect = (x, y) => { c.lineWidth = 3; c.strokeRect(x, y, 90, 56); letters(x + 10, y + 12, 70); letters(x + 10, y + 32, 50); return [x, y, x + 90, y + 56]; };
+  const photo = (x, y) => { for (let j = 0; j < 64; j += 2) for (let i = 0; i < 96; i += 2) { const v = 30 + Math.floor(rnd() * 190); c.fillStyle = `rgb(${v},${v},${v})`; c.fillRect(x + i, y + j, 2, 2); } c.fillStyle = '#000'; return [x, y, x + 96, y + 64]; };
+  const cell = n => ({ x: vx[5] + 20, y: rules[n] + T + 40 });
+  boxes[2] = [diamond(cell(2).x, cell(2).y)];
+  boxes[4] = [rect(cell(4).x, cell(4).y), diamond(cell(4).x + 160, cell(4).y)];
+  boxes[6] = [photo(cell(6).x, cell(6).y)];
+  let out = cv;
+  if (turn) {
+    const o = document.createElement('canvas'), q = o.getContext('2d');
+    if (turn === 180) { o.width = cv.width; o.height = cv.height; q.translate(o.width, o.height); q.rotate(Math.PI); }
+    else { o.width = cv.height; o.height = cv.width; q.translate(o.width, 0); q.rotate(Math.PI / 2); }   // 90: the page turned a quarter clockwise
+    q.drawImage(cv, 0, 0); out = o;
+  }
+  const centre = n => (rules[n] + T + hs[n] / 2) / PH;                     // vertical centre of row n as a fraction of the upright page
+  return { b64: out.toDataURL('image/jpeg', 0.92).split(',')[1], PW, PH, K, T, rules, hs, vx, boxes, ys: [1, 2, 3, 4, 5, 6, 7, 8].map(centre) };
 }"""
 
-IDB_KEYS = """() => new Promise(res => { const q = indexedDB.open('rallyMonteStyle.pages');
+IDB_SIZES = """() => new Promise(res => { const q = indexedDB.open('rallyMonteStyle.pages');
   q.onupgradeneeded = () => q.result.createObjectStore('pages');
-  q.onsuccess = () => { const g = q.result.transaction('pages').objectStore('pages').getAllKeys(); g.onsuccess = () => res(g.result); }; })"""
+  q.onsuccess = () => { const out = {}; const c = q.result.transaction('pages').objectStore('pages').openCursor();
+    c.onsuccess = () => { const k = c.result; if (k) { out[k.key] = k.value.size; k.continue(); } else res(out); }; }; })"""
 
 # All checks for "what is on screen for this row" are by property, not by RI number.
-PICK = {
-    'none':  "R().rows.findIndex(x => !x.band)",
-    'tall':  "(() => { let k = -1, m = -1; R().rows.forEach((x, i) => { const h = x.band ? x.band.bottom - x.band.top : -1; if (h > m) { m = h; k = i; } }); return k; })()",
-    'short': "(() => { let k = -1, m = 9; R().rows.forEach((x, i) => { const h = x.band ? x.band.bottom - x.band.top : 9; if (h < m) { m = h; k = i; } }); return k; })()",
-    'sign':  "(() => { let k = -1, m = 9; R().rows.forEach((x, i) => { const h = x.band && /\\[sign:/.test(x.instr) ? x.band.bottom - x.band.top : 9; if (h < m) { m = h; k = i; } }); return k; })()",
+ROW = {
+    'plain':       "R().rows.findIndex(x => x.band && !/\\[sign:/.test(x.instr))",
+    'inline':      "R().rows.findIndex(x => x.signs.length === 1 && (x.instr.match(/\\[sign:/g) || []).length === 1)",
+    'two':         "R().rows.findIndex(x => x.signs.length === 2 && (x.instr.match(/\\[sign:/g) || []).length === 2)",
+    'mismatch':    "R().rows.findIndex(x => x.signs.length === 1 && (x.instr.match(/\\[sign:/g) || []).length === 2)",
+    'placeholder': "R().rows.findIndex(x => x.signs.length === 0 && /\\[sign:/.test(x.instr))",
+    'nobandrow':   "R().rows.findIndex(x => !x.band)",
 }
+GO = """(pick) => { R().rows.forEach(x => { x.done = false; x.ttDone = null; x.doneAt = null; x.estLock = null; });
+  const k = eval(pick); for (let i = 0; i < k; i++) R().rows = Core.completeActive(R(), 0); save(R()); show('run'); }"""
 
 
 async def main():
-    api = {'rows': [], 'calls': 0}
+    api = {'rows': [], 'rotation': 0, 'calls': 0}
     async with async_playwright() as p:
         b = await launch_browser(p)
         ctx = await b.new_context(viewport={'width': 390, 'height': 844}, has_touch=True, is_mobile=True)
@@ -51,41 +75,48 @@ async def main():
 
         async def handler(route):
             api['calls'] += 1
+            body = {'rotation': api['rotation'], 'rows': api['rows']}
             await route.fulfill(status=200, content_type='application/json', headers={'access-control-allow-origin': '*'},
-                                body=json.dumps({'content': [{'type': 'text', 'text': '```json\n' + json.dumps(api['rows']) + '\n```'}], 'stop_reason': 'end_turn'}))
+                                body=json.dumps({'content': [{'type': 'text', 'text': '```json\n' + json.dumps(body) + '\n```'}], 'stop_reason': 'end_turn'}))
         await ctx.route('https://api.anthropic.com/**', handler)
         pg = await ctx.new_page(); capture_errors(pg, label='images')
         await pg.goto(APP_URL)
         await pg.evaluate("localStorage.clear(); localStorage.setItem('rallyMonteStyle.apikey', 'sk-ant-test'); indexedDB.deleteDatabase('rallyMonteStyle.pages')")
         await pg.reload(); await pg.click('#btnNew')
 
-        geo = await pg.evaluate(DRAW)
+        geo = await pg.evaluate(DRAW, 0)
         jpeg = base64.b64decode(geo['b64'])
-        ys = [round(y, 2) for y in geo['ys']]
-        T, H, W, rules, hs, vx = geo['T'], geo['H'], geo['W'], geo['rules'], geo['hs'], geo['vx']
+        ys = [round(y, 3) for y in geo['ys']]
+        T, PH, PW, rules, hs, vx, K = geo['T'], geo['PH'], geo['PW'], geo['rules'], geo['hs'], geo['vx'], geo['K']
+        upside = base64.b64decode((await pg.evaluate(DRAW, 180))['b64'])
+        sideways = base64.b64decode((await pg.evaluate(DRAW, 90))['b64'])
 
         def rows(ys):
             base = lambda ri, instr, **kw: {'ri': ri, 'om': '1.10', 'czt': None, 'cp': None, 'instr': instr, 'info': '', **kw}
             return [base(801, 'Turn left at the barn', row=1, y=ys[0]),
                     base(802, 'CHECKPOINT at [sign: deer crossing]', row=2, y=ys[1]),
-                    base(803, 'Bear right at [sign: photo of a red barn]', row=3, y=ys[2]),
-                    base(804, 'Stop at the mill'),                      # no row, no y: no image
-                    base(805, 'Right at the creek', row=2, y=ys[4])]    # row names the sign band, y says band 5: y wins, flagged
+                    base(803, 'Bear right at the mill', row=3, y=ys[2]),
+                    base(804, 'At [sign: stop] then [sign: yield]', row=4, y=ys[3]),
+                    base(805, 'Right at [sign: unnamed marker]', row=5, y=ys[4]),
+                    base(806, 'Left at [sign: red barn] and [sign: silo]', row=6, y=ys[5]),
+                    base(807, 'Right at the creek', row=2, y=ys[6]),         # row names band 2, y says band 7: y wins, flagged
+                    base(808, 'Stop at the mill')]                          # no row, no y: no image
+
         api['rows'] = rows(ys)
 
-        async def read(files=True):
+        async def read(files=True, data=jpeg):
             if files:
-                await pg.set_input_files('#fPages', files=[{'name': 'invented-page.jpg', 'mimeType': 'image/jpeg', 'buffer': jpeg}])
+                await pg.set_input_files('#fPages', files=[{'name': 'invented-page.jpg', 'mimeType': 'image/jpeg', 'buffer': data}])
             await pg.click('#btnRead')
-            await pg.wait_for_selector('#modal.on')
+            await pg.wait_for_selector('#modal.on', timeout=60000)
             txt = await pg.inner_text('#mBody')
             await pg.click('#mOk')
             return txt
 
-        async def keys():
-            return await pg.evaluate(IDB_KEYS)
+        async def sizes():
+            return await pg.evaluate(IDB_SIZES)
 
-        async def until(js, msg, timeout=4000):
+        async def until(js, msg, timeout=6000):
             try:
                 await pg.wait_for_function(js, timeout=timeout)
                 return check(True, msg)
@@ -98,165 +129,234 @@ async def main():
             await pg.click('#tabs button[data-v=route]')
             return next((l for l in t.split('\n') if l.startswith('Page images:')), '(no Page images line)')
 
-        # ---- read: bands, page copy, Data line ----
+        # ---- read: bands, signs, page copy, Data line ----
         await pg.click('#tabs button[data-v=route]')
         txt = await read()
-        check('could not be saved' not in txt, 'a normal read reports no page-image problem')
-        info = await pg.evaluate("R().rows.map(x => ({ instr: x.instr, band: x.band || null, keys: Object.keys(x) }))")
+        check('could not be saved' not in txt, 'a normal read reports no image problem')
+        info = await pg.evaluate("R().rows.map(x => ({ instr: x.instr, band: x.band || null, signs: x.signs, keys: Object.keys(x) }))")
         banded = [x for x in info if x['band']]
-        check(len(banded) == 4 and len([x for x in info if not x['band']]) == 1, 'rows with valid row/y have a band; the row without them has none')
-        check(all(set(x['band']) - {'check'} == {'page', 'top', 'bottom', 'left', 'right'} for x in banded), 'a band is {page, top, bottom, left, right}')
-        check(all('row' not in x['keys'] and 'y' not in x['keys'] for x in info), 'the raw row and y are not stored')
+        check(len(banded) == 7 and len([x for x in info if not x['band']]) == 1, 'rows with valid row/y have a band; the row without them has none')
+        check(all(set(x['band']) - {'check', 'pageCheck'} == {'page', 'top', 'bottom', 'left', 'right', 'src'} for x in banded), 'a band is {page, top, bottom, left, right, src} plus flags')
+        check(all('row' not in x['keys'] and 'y' not in x['keys'] and 'tags' not in x['keys'] for x in info), 'the raw row, y, and tag count are not stored')
         tall = max(banded, key=lambda x: x['band']['bottom'] - x['band']['top'])['band']
-        check(abs(tall['top'] - (rules[3] + T) / H) < 0.003 and abs(tall['bottom'] - rules[4] / H) < 0.003, 'the tallest band follows the drawn rules')
-        check(abs(tall['left'] - (vx[4] + T) / W) < 0.005 and abs(tall['right'] - vx[6] / W) < 0.005, 'the crop runs from the Instruction rule to the table edge')
+        # the page copy is the whole sheet (the drawn page is the sheet), so expected fractions come from the drawn geometry
+        fy = lambda y: y / PH
+        fx = lambda x: x / PW
+        check(abs(tall['top'] - fy(rules[2] + T)) < 0.006 and abs(tall['bottom'] - fy(rules[3])) < 0.006, 'the tallest band follows the drawn rules')
+        check(abs(tall['left'] - fx(vx[5] + T)) < 0.01 and abs(tall['right'] - fx(vx[7])) < 0.01, 'the band runs from the Instruction rule to the table edge')
+        check(all(x['band']['src'] in ('rules', 'y') for x in banded), 'every band has a src')
         flagged = [x for x in banded if x['band'].get('check')]
-        check(len(flagged) == 1 and abs(flagged[0]['band']['top'] - (rules[5] + T) / H) < 0.003, 'when y disagrees with row, y decides and the band is marked check')
-        k1 = await keys()
-        check(len(k1) == 1, f'one page copy is stored ({len(k1)})')
+        check(len(flagged) == 1 and flagged[0]['band']['src'] == 'y' and abs(flagged[0]['band']['top'] - fy(rules[7] + T)) < 0.006, 'when y disagrees with row, y decides, src is y, and the band is marked check')
+        counts = [(len(x['signs']), len(re.findall(r'\[sign:', x['instr']))) for x in info]
+        check(sorted([c for c in counts if c[0]], reverse=True) == [(2, 2), (1, 2), (1, 1)], f'graphics found: one, two side by side, one for two tags ({counts})')
+        check(sum(len(x['signs']) for x in info) == 4, 'four sign images in all; a row with a tag but no graphic gets none')
+        k1 = await sizes()
+        check(len([k for k in k1 if k.startswith('pg')]) == 1 and len([k for k in k1 if k.startswith('sg')]) == 4, f'one page copy and four sign images are stored ({len(k1)})')
         line = await data_line()
-        check(re.fullmatch(r'Page images: 1 page, \d+\.\d MB on this device', line) is not None, f'Data line, singular ({line})')
+        m = re.fullmatch(r'Page images: 1 page, (\d+\.\d) MB on this device', line)
+        check(m is not None, f'Data line, singular ({line})')
+        check(m is not None and abs(float(m.group(1)) - sum(k1.values()) / 1048576) <= 0.051, 'the Data size includes the sign images')
+
+        # ---- sign crops come from the original photo at full resolution ----
+        await until("document.querySelectorAll('#rtEdit img.sgimg[src]').length >= 4", 'Route shows the sign images')
+        dim = await pg.evaluate("""(pick) => { const x = R().rows[eval(pick)], im = document.querySelector('#rtEdit img.sgimg[data-sg="' + x.signs[0] + '"]'); return { w: im.naturalWidth, h: im.naturalHeight }; }""", ROW['inline'])
+        want = (geo['boxes']['2'][0][3] - geo['boxes']['2'][0][1]) * K
+        check(dim['h'] >= 0.85 * want, f'a sign image is cut from the original photo, not the smaller page copy ({dim["h"]} px for {want} drawn)')
+        check(max(dim['w'], dim['h']) <= 800, 'sign images are at most 800 px on the long side')
 
         # ---- Route tab ----
-        await until("document.querySelectorAll('#rtEdit img.pgimg[src]').length === 4", 'Route shows one image per row with a band')
-        n_img = await pg.evaluate("document.querySelectorAll('#rtEdit img.pgimg').length")
-        check(n_img == 4, f'rows with no band show no image ({n_img} images for 4 banded rows)')
-        check(await pg.evaluate("[...document.querySelectorAll('#rtEdit img.pgimg')].every(i => i.naturalWidth > 0 && i.naturalHeight > 0)"), 'Route images decode')
+        check(await pg.evaluate("[...document.querySelectorAll('#rtEdit img.sgimg')].every(i => i.naturalWidth > 0 && i.naturalHeight > 0)"), 'Route sign images decode')
+        check(await pg.evaluate("document.querySelectorAll('#rtEdit button.pgbtn').length") == 7, 'Route has a Page control on each banded row')
+        check(await pg.evaluate("document.querySelectorAll('#rtEdit img.pgimg').length") == 0, 'the whole-row band image is not shown inline')
+        check(await pg.evaluate("document.querySelectorAll('#rtEdit .sgph').length") >= 3, 'a tag with no image is a placeholder (the tag-only row, and the two tags of the mismatched row)')
+        ph = await pg.evaluate("(() => { const e = document.querySelector('#rtEdit .sgph'); const s = getComputedStyle(e); return { b: s.borderStyle, c: s.color, t: e.textContent }; })()")
+        check(ph['b'] == 'dashed' and ph['t'] in ('unnamed marker', 'red barn', 'silo'), f'the placeholder is a dashed box with the tag words ({ph["t"]})')
         ftxt = await pg.inner_text('.flags')
-        check(len(re.findall(r'RI \S+: check page image', ftxt)) == 1, 'Route lists one "check page image" flag')
-        check('page image missing' not in ftxt, 'no "page image missing" flag while the copies exist')
+        nb = await pg.evaluate("(() => { const x = R().rows.find(x => !x.band); return x && { ri: String(x.ri), tag: x.imgCheck && x.imgCheck.slice(0, 2) }; })()")
+        check(nb is not None and nb['tag'] == 'pg', 'the row read from the page with no band stores the page copy id on the row')
+        check(len(re.findall(r'RI \S+: check page image\b', ftxt)) == 2 and f"RI {nb['ri']}: check page image" in ftxt, 'Route lists "check page image" for the banded row to check and for the row with no band')
+        check('page image missing' not in ftxt and 'check page images' not in ftxt, 'no missing flag while the copies exist, no page flag')
         check(await pg.evaluate("document.querySelector('#rtEdit .pgrow').previousElementSibling.querySelector('input[data-k=instr]') !== null"), 'the image line sits under its row')
         await pg.screenshot(path=str(OUT_DIR / 'images-route.png'))
+        # the Page control opens the whole band full screen
+        await pg.click('#rtEdit button.pgbtn >> nth=1')
+        await until("document.getElementById('imgView').classList.contains('on') && document.getElementById('imgFull').naturalWidth > 0", 'the Page control opens the band full screen')
+        check(await pg.evaluate("document.getElementById('imgFull').naturalWidth > document.getElementById('imgFull').naturalHeight"), 'the band is wide, not a sign')
+        await pg.mouse.click(5, 5)
+        check(not await pg.evaluate("document.getElementById('imgView').classList.contains('on')"), 'a tap closes it')
 
-        # ---- Run card: layouts, tap to expand ----
+        # ---- Run card: layouts ----
         VIS = """() => { const top = document.querySelector('.runtop').getBoundingClientRect();
           const lim = { b: Math.min(innerHeight, top.bottom) + 0.5, r: Math.min(innerWidth, top.right) + 0.5 };
-          return ['btnDone', 'btnUndo', 'btnTA', 'fSpeedo'].every(id => { const r = document.getElementById(id).getBoundingClientRect();
-            return r.top >= -0.5 && r.left >= -0.5 && r.bottom <= lim.b && r.right <= lim.r && r.width > 0; }); }"""
-        GEOM = """() => { const m = document.querySelector('.ac-media'), im = document.querySelector('.ac-img'), t = document.querySelector('.ac-text'),
-          card = document.querySelector('.active-card').getBoundingClientRect();
-          if (!m) return null; const mr = m.getBoundingClientRect(), tr = t.getBoundingClientRect(), r = im.getBoundingClientRect();
-          return { below: mr.top >= tr.bottom - 1, beside: mr.left >= tr.right - 1, h: r.height, w: r.width, nw: im.naturalWidth, nh: im.naturalHeight, card: card.width, loaded: im.naturalWidth > 0 }; }"""
+          return ['btnDone', 'btnUndo', 'btnTA', 'fSpeedo'].filter(id => { const r = document.getElementById(id).getBoundingClientRect();
+            return !(r.top >= -0.5 && r.left >= -0.5 && r.bottom <= lim.b && r.right <= lim.r && r.width > 0); })
+            .map(id => { const r = document.getElementById(id).getBoundingClientRect(); return id + ' bottom ' + Math.round(r.bottom) + ' > ' + Math.round(lim.b); }); }"""
+        GEOM = """() => { const t = document.querySelector('.ac-instr'), card = document.querySelector('.active-card').getBoundingClientRect(),
+          ims = [...t.querySelectorAll('img.sgimg')], cr = t.getBoundingClientRect();
+          return { n: ims.length, inline: ims.filter(i => i.closest('.sgafter') === null).length, after: t.querySelectorAll('.sgafter img').length, ph: t.querySelectorAll('.sgph').length,
+            maxh: Math.max(0, ...ims.map(i => i.getBoundingClientRect().height)), maxw: Math.max(0, ...ims.map(i => i.getBoundingClientRect().width)),
+            inside: ims.every(i => { const r = i.getBoundingClientRect(); return r.left >= cr.left - 1 && r.right <= cr.right + 1; }), loaded: ims.every(i => i.naturalWidth > 0),
+            card: card.width, page: !!document.querySelector('.active-card .pgbtn') }; }"""
         for w, h, label in LAYOUTS:
             await pg.set_viewport_size({'width': w, 'height': h})
-            land = w > h
-            for kind in ['none', 'short', 'sign', 'tall']:
-                await pg.evaluate("""(pick) => { R().rows.forEach(x => { x.done = false; x.ttDone = null; x.doneAt = null; x.estLock = null; });
-                  const k = eval(pick); for (let i = 0; i < k; i++) R().rows = Core.completeActive(R(), 0); save(R()); show('run'); }""", PICK[kind])
-                if kind != 'none':
-                    await until("document.querySelector('.ac-img') && document.querySelector('.ac-img').naturalWidth > 0", f'{label} {kind}: the card image loads')
+            for kind, want in [('plain', (0, 0, 0, 0)), ('inline', (1, 1, 0, 0)), ('two', (2, 2, 0, 0)), ('mismatch', (1, 0, 1, 2)), ('placeholder', (0, 0, 0, 1)), ('nobandrow', (0, 0, 0, 0))]:
+                await pg.evaluate(GO, ROW[kind])
+                if want[0]:
+                    await until("document.querySelectorAll('.ac-instr img.sgimg[src]').length > 0", f'{label} {kind}: the card images load')
                 g = await pg.evaluate(GEOM)
-                if kind == 'none':
-                    check(g is None, f'{label}: a row with no image has no media box (text uses the full width)')
-                elif g:
-                    check(g['loaded'], f'{label} {kind}: image decoded')
-                    check(g['beside'] if land else g['below'], f'{label} {kind}: image is {"beside" if land else "below"} the card text')
-                    check(g['h'] <= (110 if land else 120) + 0.5, f'{label} {kind}: image height {g["h"]:.0f} within the cap')
-                    check(g['w'] <= g['nw'] + 0.5 and g['h'] <= g['nh'] + 0.5, f'{label} {kind}: not enlarged past natural size')
-                    if land: check(g['w'] <= g['card'] * 0.4 + 1, f'{label} {kind}: image within 40% of the card width')
-                    else: check(g['w'] <= g['card'] + 0.5, f'{label} {kind}: image within the card width')
-                ok = await pg.evaluate(VIS)
-                check(ok, f'{label} {kind}: Complete, Undo, TA and the speedometer stay fully visible')
+                check((g['n'], g['inline'], g['after'], g['ph']) == want, f'{label} {kind}: images, inline, after, placeholders = {want} (got {(g["n"], g["inline"], g["after"], g["ph"])})')
+                check(g['loaded'] and g['inside'], f'{label} {kind}: images decode and stay inside the instruction')
+                check(g['maxh'] <= 76.5, f'{label} {kind}: image height {g["maxh"]:.0f} within the cap')
+                check(g['maxw'] <= g['card'] + 0.5, f'{label} {kind}: image within the card width')
+                check(g['page'] == (kind != 'nobandrow'), f'{label} {kind}: the Page control is there only when the row has a band')
+                vis = await pg.evaluate(VIS)
+                check(not vis, f'{label} {kind}: Complete, Undo, TA and the speedometer stay fully visible ({vis})')
+                check(await pg.evaluate("!document.querySelector('.ac-img.pgimg') && !document.querySelector('.ac-media')"), f'{label} {kind}: no whole-row image on the card')
             await pg.screenshot(path=str(OUT_DIR / f'images-run-{w}x{h}.png'))
         await pg.set_viewport_size({'width': 390, 'height': 844})
+        # the Run list shows the same images inline
+        await pg.evaluate(GO, ROW['two'])
+        await until("document.querySelectorAll('#runTbl img.sgimg[src]').length >= 4", 'the Run list shows sign images in the instruction cells')
+        check(await pg.evaluate("document.querySelectorAll('#runTbl img.pgimg').length") == 0, 'the Run list has no whole-row images')
 
-        # tap to expand (tall row is active from the loop above)
-        await pg.evaluate("""(pick) => { R().rows.forEach(x => { x.done = false; x.ttDone = null; x.doneAt = null; x.estLock = null; });
-          const k = eval(pick); for (let i = 0; i < k; i++) R().rows = Core.completeActive(R(), 0); save(R()); show('run'); }""", PICK['tall'])
-        await until("document.querySelector('.ac-img') && document.querySelector('.ac-img').naturalWidth > 0", 'tall row: card image loads at 390')
+        # tap a sign to expand; the Page control opens the band
         done0 = await pg.evaluate("R().rows.filter(x => x.done).length")
-        await pg.click('.ac-img')
-        check(await pg.evaluate("document.getElementById('imgView').classList.contains('on')"), 'tapping the image opens it full screen')
+        await pg.click('.ac-instr img.sgimg >> nth=0')
+        check(await pg.evaluate("document.getElementById('imgView').classList.contains('on')"), 'tapping a sign opens it full screen')
         check(await pg.evaluate("getComputedStyle(document.getElementById('imgView')).backgroundColor") == 'rgb(0, 0, 0)', 'the full-screen view has a dark background')
         covered = await pg.evaluate("""() => { const r = document.getElementById('btnDone').getBoundingClientRect();
           const e = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return !!e.closest('#imgView'); }""")
         check(covered, 'Complete is covered while the image is open')
         await pg.mouse.click(5, 5)
         check(not await pg.evaluate("document.getElementById('imgView').classList.contains('on')"), 'a tap anywhere closes it')
+        await pg.click('.active-card .pgbtn')
+        await until("document.getElementById('imgView').classList.contains('on') && document.getElementById('imgFull').naturalWidth > 0", 'the Run card Page control opens the band')
+        await pg.mouse.click(5, 5)
         check(await pg.evaluate("R().rows.filter(x => x.done).length") == done0, 'opening and closing changes no run state')
 
         # Night theme dims, never inverts
         await pg.evaluate("store.prefs.theme = 'night'; save(); applyTheme()")
-        f = await pg.evaluate("getComputedStyle(document.querySelector('.ac-img')).filter")
-        check('brightness(0.6)' in f and 'invert' not in f, f'Night dims the card image to 60% ({f})')
+        f = await pg.evaluate("getComputedStyle(document.querySelector('.ac-instr img.sgimg')).filter")
+        check('brightness(0.6)' in f and 'invert' not in f, f'Night dims the sign images to 60% ({f})')
         await pg.evaluate("store.prefs.theme = 'day'; save(); applyTheme()")
 
         # reload keeps images
         await pg.reload(); await pg.wait_for_selector('#tabs')
-        await until("document.querySelector('.ac-img') && document.querySelector('.ac-img').naturalWidth > 0", 'images survive a reload')
+        await until("document.querySelector('.ac-instr img.sgimg') && document.querySelector('.ac-instr img.sgimg').naturalWidth > 0", 'images survive a reload')
+
+        # ---- editing a row keeps its images; placement follows the counts ----
+        await pg.click('#tabs button[data-v=route]')
+        ix = await pg.evaluate(ROW['inline'])
+        before = await pg.evaluate(f"R().rows[{ix}].signs.slice()")
+        await pg.fill(f'#rtEdit input[data-i="{ix}"][data-k=instr]', 'CHECKPOINT at [sign: deer crossing] and [sign: extra]'); await pg.keyboard.press('Tab')
+        check(await pg.evaluate(f"JSON.stringify(R().rows[{ix}].signs) === JSON.stringify({json.dumps(before)})"), 'editing the text keeps the sign images')
+        await pg.evaluate("renderRoute()")
+        check(await pg.evaluate(f"document.querySelectorAll('#rtEdit tr.pgrow')[{ix}].querySelectorAll('.sgafter img').length") == 1, 'counts now differ: the image follows the text')
+        await pg.fill(f'#rtEdit input[data-i="{ix}"][data-k=instr]', 'CHECKPOINT at [sign: deer crossing]'); await pg.keyboard.press('Tab'); await pg.evaluate("renderRoute()")
+        check(await pg.evaluate(f"document.querySelectorAll('#rtEdit tr.pgrow')[{ix}].querySelectorAll('.sgafter img').length") == 0, 'back to one tag: the image replaces it again')
 
         # ---- JSON export, import, Duplicate ----
         j = await pg.evaluate("JSON.stringify({ app: 'rally-monte-style', version: 1, rally: R() })")
-        check('data:image' not in j and len(j) < 20000, f'JSON export holds no image data ({len(j)} bytes)')
+        check('data:image' not in j and len(j) < 25000, f'JSON export holds no image data ({len(j)} bytes)')
         await pg.click('#tabs button[data-v=data]')
         await pg.set_input_files('#fImport', files=[{'name': 'r.json', 'mimeType': 'application/json', 'buffer': j.encode()}])
-        await pg.wait_for_function("R().rows.length > 0 && R().rows.every(x => !x.band)")
-        check(True, 'a JSON-imported rally has no bands')
+        await pg.wait_for_function("R().rows.length > 0 && R().rows.every(x => !x.band && x.signs.length === 0)")
+        check(True, 'a JSON-imported rally has no bands and no sign images')
         await pg.click('#tabs button[data-v=route]')
-        check('page image' not in (await pg.inner_text('#routeBody')), 'the imported rally has no page image flags and no images')
-        check(await pg.evaluate("document.querySelectorAll('#rtEdit img.pgimg').length") == 0, 'the imported rally shows no images')
+        check('page image' not in (await pg.inner_text('#routeBody')), 'the imported rally has no page image flags')
+        check(await pg.evaluate("document.querySelectorAll('#rtEdit img.sgimg').length") == 0 and await pg.evaluate("document.querySelectorAll('#rtEdit button.pgbtn').length") == 0, 'the imported rally shows no images and no Page control')
+        check(await pg.evaluate("document.querySelectorAll('#rtEdit .sgph').length") >= 1, 'the imported rally shows its tags as placeholders')
         check(await data_line() == 'Page images: none', 'the imported rally says Page images: none')
-        await pg.evaluate("store.cur = Object.keys(store.rallies).find(k => R() && store.rallies[k].rows.some(x => x.band)); renderAll()")
+        await pg.evaluate("store.cur = Object.keys(store.rallies).find(k => store.rallies[k].rows.some(x => x.band)); renderAll()")
+        n_before = len(await sizes())
         await pg.click('#tabs button[data-v=data]'); await pg.click('#bDup')
-        check(await pg.evaluate("R().rows.length > 0 && R().rows.every(x => !x.band) && /\\(copy\\)$/.test(R().name)"), 'Duplicate rally drops the bands')
-        check(len(await keys()) == 1, 'the original rally keeps its page copy after Duplicate')
+        check(await pg.evaluate("R().rows.length > 0 && R().rows.every(x => !x.band && x.signs.length === 0) && /\\(copy\\)$/.test(R().name)"), 'Duplicate rally drops the bands and sign images')
+        check(len(await sizes()) == n_before, 'the original rally keeps its page copy and sign images after Duplicate')
         await pg.evaluate("store.cur = Object.keys(store.rallies).find(k => store.rallies[k].rows.some(x => x.band)); renderAll()")
 
-        # ---- Re-read: a valid new band replaces the old and frees the copy; an invalid one keeps the old band ----
-        old_ids = await keys()
-        api['rows'] = rows(ys)[:3]
+        # ---- Re-read: a valid new band replaces the old band and images; a row with no valid band keeps both ----
+        old_ids = set((await sizes()).keys())
+        api['rows'] = rows(ys)[:4]
         api['rows'][0] = {k: v for k, v in api['rows'][0].items() if k not in ('row', 'y')}      # returned without row/y: keeps its old band
+        api['rows'][1] = {k: v for k, v in api['rows'][1].items() if k not in ('row', 'y')}      # a row with a sign, also keeps its old band and images
         await pg.click('#tabs button[data-v=route]')
+        keep_signs = await pg.evaluate("R().rows.filter(x => /deer crossing/.test(x.instr))[0].signs.slice()")
         await read()
-        await until("R().rows.filter(x => x.band).length === 4", 'Re-read keeps the old band of a row returned without row/y, and rows not returned')
-        pages_used = await pg.evaluate("[...new Set(R().rows.filter(x => x.band).map(x => x.band.page))]")
-        check(len(pages_used) == 2, f'old and new copies are both in use ({len(pages_used)})')
-        await asyncio.sleep(0.3)
-        check(len(await keys()) == 2, 'two page copies are stored while both are used')
-
-        # ---- Delete row / Clear Route Instructions free copies ----
-        tallest = await pg.evaluate(PICK['tall'])
-        await pg.click(f'#rtEdit [data-del="{tallest}"]'); await pg.click('#mOk')
-        check(len(await keys()) == 2, 'Delete row keeps a copy another row still uses')
-        await pg.click('#btnClearRI'); await pg.click('#mOk')
+        await until("R().rows.filter(x => x.band).length === 7", 'Re-read keeps old bands for rows returned without row/y, and rows not returned')
+        now = await pg.evaluate("R().rows.filter(x => /deer crossing/.test(x.instr))[0].signs")
+        check(now == keep_signs, 'a row with no valid new band keeps its old images')
+        sw = await pg.evaluate("R().rows.filter(x => /stop\\] then/.test(x.instr))[0].signs")
+        check(len(sw) == 2 and not set(sw) & old_ids, 'a row with a valid new band gets new images, replacing the old')
         await asyncio.sleep(0.4)
-        check(await keys() == [], 'Clear Route Instructions frees the unused page copies')
+        ids_now = set((await sizes()).keys())
+        used = await pg.evaluate("[...new Set(R().rows.flatMap(x => [x.band && x.band.page, ...x.signs]).filter(Boolean))]")
+        check(ids_now == set(used), 'every stored image is in use: the replaced sign images were freed')
+
+        # ---- Delete row frees its sign images; Clear Route Instructions frees everything ----
+        ix = await pg.evaluate(ROW['two'])
+        mine = await pg.evaluate(f"R().rows[{ix}].signs.slice()")
+        await pg.click(f'#rtEdit [data-del="{ix}"]'); await pg.click('#mOk')
+        await asyncio.sleep(0.4)
+        left = set((await sizes()).keys())
+        check(not (left & set(mine)) and len(mine) == 2, 'Delete row frees the row\'s sign images')
+        check(any(k.startswith('pg') for k in left), 'Delete row keeps the page copy other rows still use')
+        await pg.click('#btnClearRI'); await pg.click('#mOk')
+        await asyncio.sleep(0.5)
+        check(await sizes() == {}, 'Clear Route Instructions frees the page copies and the sign images')
         check(await data_line() == 'Page images: none', 'the Data line falls to none')
+
+        # ---- orientation: upside down (the reader says 180) and a page turned a quarter (the pre-pass turns it, the reader then says 180) ----
+        for name, data, ys_sent in [('upside-down page', upside, [round(1 - y, 3) for y in ys]), ('sideways page', sideways, [round(1 - y, 3) for y in ys])]:
+            api['rotation'] = 180; api['rows'] = rows(ys_sent)
+            await pg.click('#tabs button[data-v=route]')
+            await read(data=data)
+            await until("R().rows.filter(x => x.band).length === 7", f'{name}: the rows have bands')
+            info = await pg.evaluate("R().rows.map(x => ({ band: x.band || null, signs: x.signs }))")
+            bb = [x['band'] for x in info if x['band']]
+            tall = max(bb, key=lambda x: x['bottom'] - x['top'])
+            check(abs(tall['top'] - fy(rules[2] + T)) < 0.006 and abs(tall['bottom'] - fy(rules[3])) < 0.006, f'{name}: the tallest band follows the drawn rules')
+            check(len([x for x in bb if x.get('check')]) == 1 and all(x['src'] in ('rules', 'y') for x in bb), f'{name}: only the row whose y disagrees is flagged')
+            check(sum(len(x['signs']) for x in info) == 4, f'{name}: four sign images')
+            await pg.click('#btnClearRI'); await pg.click('#mOk'); await asyncio.sleep(0.4)
+        api['rotation'] = 0
+
+        # (rotation 90 or 270, when the pre-pass missed, is covered by the unit tests: it cannot be made to happen here)
 
         # ---- failure: the copy cannot be saved ----
         await pg.evaluate("window.__failPut = true")
         api['rows'] = rows(ys)
         await pg.set_input_files('#fPages', files=[{'name': 'invented-page.jpg', 'mimeType': 'image/jpeg', 'buffer': jpeg}])
-        await pg.click('#btnRead'); await pg.wait_for_selector('#modal.on')
+        await pg.click('#btnRead'); await pg.wait_for_selector('#modal.on', timeout=60000)
         txt = await pg.inner_text('#mBody'); await pg.click('#mOk')
         check('Page images could not be saved on this device; rows from this page have no image.' in txt, 'a failed save adds the summary message')
-        check(await pg.evaluate("R().rows.length === 5 && R().rows.every(x => !x.band)"), 'the read still succeeds, with rows saved without bands')
+        check(await pg.evaluate("R().rows.length === 8 && R().rows.every(x => !x.band && x.signs.length === 0)"), 'the read still succeeds, with rows saved without bands or sign images')
         await pg.evaluate("window.__failPut = false")
 
-        # ---- failure: a copy goes missing ----
+        # ---- failure: images go missing ----
         await pg.click('#tabs button[data-v=route]'); await read()
-        await until("R().rows.filter(x => x.band).length === 4", 'Re-read after the failure gives the rows bands again')
+        await until("R().rows.filter(x => x.band).length === 7", 'Re-read after the failure gives the rows bands again')
         await pg.evaluate("""new Promise(res => { const q = indexedDB.open('rallyMonteStyle.pages'); q.onsuccess = () => {
           const tx = q.result.transaction('pages', 'readwrite'); tx.objectStore('pages').clear(); tx.oncomplete = () => res(); }; })""")
         await pg.reload(); await pg.wait_for_selector('#tabs'); await pg.click('#tabs button[data-v=route]')
         await until("document.querySelector('.flags') && /page image missing/.test(document.querySelector('.flags').textContent)", 'a deleted copy gives "page image missing"')
         ftxt = await pg.inner_text('.flags')
-        check(len(re.findall(r'RI \S+: page image missing', ftxt)) == 4, 'one "page image missing" flag per banded row')
-        check(await pg.evaluate("document.querySelectorAll('#rtEdit img.pgimg').length") == 0, 'rows with a missing copy show no image')
-        await pg.evaluate("""(pick) => { const k = eval(pick); R().rows.forEach(x => { x.done = false; }); for (let i = 0; i < k; i++) R().rows = Core.completeActive(R(), 0); save(R()); show('run'); }""", PICK['tall'])
-        check(await pg.evaluate("!document.querySelector('.ac-img') && !document.querySelector('.ac-media') && !/image/i.test(document.querySelector('.active-card').textContent)"), 'Run shows no image and no message when the copy is missing')
+        check(len(re.findall(r'RI \S+: page image missing', ftxt)) == 7, 'one "page image missing" flag per banded row')
+        check(await pg.evaluate("document.querySelectorAll('#rtEdit img.sgimg').length") == 0 and await pg.evaluate("document.querySelectorAll('#rtEdit button.pgbtn').length") == 0, 'rows with missing images show no images and no Page control')
+        check(await pg.evaluate("document.querySelectorAll('#rtEdit .sgph').length") >= 5, 'their tags show as placeholders')
+        await pg.evaluate(GO, ROW['inline'].replace('x.signs.length === 1 &&', ''))
+        check(await pg.evaluate("!document.querySelector('.ac-instr img.sgimg') && !document.querySelector('.active-card .pgbtn') && !/image/i.test(document.querySelector('.active-card').textContent)"), 'Run shows no image, no Page control, and no message when the images are missing')
         check(await pg.evaluate("document.getElementById('btnDone') && !document.getElementById('btnDone').disabled"), 'a missing image never blocks Complete')
 
-        # ---- Delete rally frees its copies ----
+        # ---- Delete rally frees its images ----
         await pg.click('#tabs button[data-v=route]'); api['rows'] = rows(ys); await read()
         await until("R().rows.filter(x => x.band).length > 0", 'rows have bands again before Delete rally')
-        before = len(await keys())
+        before = len(await sizes())
         await pg.click('#tabs button[data-v=data]'); await pg.click('#bDel'); await pg.click('#mOk')
-        await asyncio.sleep(0.5)
-        left = await keys()
-        check(before >= 1 and len(left) < before + 0 or not left, f'Delete rally frees its page copies ({before} before, {len(left)} after)')
-        in_use = await pg.evaluate("[...new Set(Object.values(store.rallies).flatMap(r => r.rows.filter(x => x.band).map(x => x.band.page)))]")
-        check(all(k in in_use for k in left), 'Delete rally frees its page copies (only copies other rallies use remain)')
+        await asyncio.sleep(0.6)
+        left = await sizes()
+        check(before > 1 and len(left) < before, f'Delete rally frees its images ({before} before, {len(left)} after)')
+        in_use = await pg.evaluate("[...new Set(Object.values(store.rallies).flatMap(r => r.rows.flatMap(x => [x.band && x.band.page, ...(x.signs || [])])).filter(Boolean))]")
+        check(all(k in in_use for k in left), 'only images other rallies use remain')
         await b.close()
 
 run(main)

@@ -27,26 +27,27 @@ Python: use the project environment (Python 3.14); never the global python.
 Commands below use the Windows venv path; on Linux/WSL use `.venv/bin/python`. `run_all.py` and every e2e script exit 1 with a version message on any other Python.
 
 ```sh
-node test/core.test.js                     # unit tests for src/core.js (this is all CI runs)
+node test/core.test.js                     # unit tests for src/core.js
+node test/vision.test.js                   # unit tests for src/vision.js (band finding, sign graphics); CI runs it too
 .venv/Scripts/python test/e2e/e2e6.py      # one browser test (Playwright); needs dist/ built
 .venv/Scripts/python test/e2e/pwa.py       # serves dist/ on 127.0.0.1:8765
 .venv/Scripts/python test/run_all.py       # build + unit tests + every e2e script; stops at first failure
 ```
 
-- The unit tests are a single assert script. To run a subset, comment out sections or run snippets with `node -e "const Core=require('./src/core.js'); ..."`.
+- The unit tests are plain assert scripts (`test/synth.js` draws and photographs the synthetic page for the vision tests). To run a subset, comment out sections or run snippets with `node -e "const Core=require('./src/core.js'); ..."`.
 - Each e2e script exits 1 when a check fails or an unexpected page error is captured, so `run_all.py` stops at the first real failure. In `test/e2e/_common.py`: `check(cond, msg)` records a pass or fail and never raises; `capture_errors(page, allow=())` records `pageerror` and console-error messages for a page (call it for every page); `run(main)` replaces `asyncio.run`, counts unallowlisted errors as failures, prints `<script>: N checks, M failed`, and sets the exit code. Setup failures (server, navigation, selector timeout) raise. Take expected values from `docs/DESIGN.md` rules or compute them in the page with `Core`, never from current output, and avoid sample-specific RI numbers.
 - `ALLOW` in `_common.py` is a list of `(kind, regex, reason)` entries (`kind` is `pageerror` or `console`) for known, harmless messages. It starts empty. Add an entry only for a message seen in a real run, with a reason; a `pageerror` entry also needs a justification in the PR. Screenshots and a few informational prints remain prints. Screenshots go to `test/e2e/out/` (gitignored).
 - `test/e2e/_common.py` is shared by the e2e scripts; `test/e2e/page.png` is a committed fixture image that they upload.
-- `run_all.py` runs these e2e scripts, in this order (each needs `dist/` built). Supported layouts (DESIGN § Testing): 390x844 and 360x780 portrait, and 844x390 landscape. Logic checks run at 390x844 only unless noted.
+- `run_all.py` runs the build, both unit-test scripts, and these e2e scripts, in this order (each needs `dist/` built). Supported layouts (DESIGN § Testing): 390x844 and 360x780 portrait, and 844x390 landscape. Logic checks run at 390x844 only unless noted.
   - `e2e5.py`: Run screen Time Allowance dialog, entry rules, and speedometer (390 only). At all three layouts: the TA and speedometer strip, the active card with Complete and Undo, and full screen (header and tabs hidden, ✕ exits).
   - `e2e6.py`: Run screen TT and estimate display, NEXT IN, locked estimates, Undo order, and per-rally scroll (390 only). At all three layouts: scroll kept through changes, Complete placing the active RI near the top, and first-visit placement. Also asserts the Run list's columns (two with the CP column in landscape at 640 px or wider, else one with no CP) at the three layouts and at a 768x1024 wide portrait, which is not a supported layout and only checks that two columns need landscape. Use it for any Run-screen change.
   - `e2e7.py`: Route screen paste and CSV import, Read without an API key, and no offline-copy button (390 only).
   - `pwa.py`: offline cache, update prompt, and API-key reading (photo read, merge by RI, rally switch during a read) with the Anthropic API mocked (390 only). Use it for anything touching install, offline, or API reading.
   - `validation.py`: entry validation for CN, close-RI limit, OCF, OM, and the speedometer (390 only).
-  - `images.py`: page images (issue #6) with the reader mocked and a synthetic ruled page drawn in the browser: bands, page copies in IndexedDB, Route and Run images at all three layouts, tap to expand, Data line, freeing, JSON import and Duplicate, and both failure paths (390 only except the layout checks).
+  - `images.py`: page and sign images (issues #6 and #66) with the reader mocked and a synthetic ruled page with drawn signs, drawn in the browser: bands and `src`, page copy and sign images in IndexedDB (sign crops cut from the original, larger than the copy), inline sign images, images after the text when the counts differ, and placeholders on Route and Run at all three layouts, the Page control, tap to expand, upside-down and sideways pages, Data line (size includes the signs), the lifecycle (edit, Delete row, Clear, Re-read, JSON import, Duplicate, Delete rally), and both failure paths (390 only except the layout checks).
   - `vehicle.py`: the Vehicle field on the set-up form. At all three layouts: its placement below Passengers and its width. At 390 only: persistence, the JSON round trip, old files, and CSV.
 - The guard test is at the end of `test/core.test.js`: it reads `dist/index.html` (run `build.py` first) and fails if it contains a removed claude.ai runtime identifier. CI builds before the unit tests, so it gates the Pages deploy.
-- CI (`.github/workflows/pages.yml`) runs only `python3 build.py` and `node test/core.test.js`. It does not run the e2e tests.
+- CI (`.github/workflows/pages.yml`) runs only `python3 build.py`, `node test/core.test.js`, and `node test/vision.test.js`. It does not run the e2e tests.
 
 ## Rules for every change
 
@@ -75,7 +76,7 @@ Merging is done by the owner on GitHub after review.
 
 ## Architecture
 
-**Build = inlining.** `build.py` replaces the `/*CORE*/`, `/*SAMPLE*/` and `/*APP*/` placeholders in `src/app.html` with the contents of `src/core.js`, `src/sample.js` and `src/app.js`. The result is one self-contained `dist/index.html`. The build also:
+**Build = inlining.** `build.py` replaces the `/*CORE*/`, `/*VISION*/`, `/*SAMPLE*/` and `/*APP*/` placeholders in `src/app.html` with the contents of `src/core.js`, `src/vision.js`, `src/sample.js` and `src/app.js`. The result is one self-contained `dist/index.html`. The build also:
 - stamps a version (`UTC timestamp-gitsha`) into `__APP_VERSION__` (a meta tag, shown on the Data tab) and `__VERSION__` in `sw.js`
 - fills `__ASSETS__` in `web/sw.js` with the list of cached files
 - copies the manifest and icons into `dist/`
@@ -84,6 +85,7 @@ Source files must never contain `</script` (the build asserts this). Edit `src/`
 
 **Core vs. UI split.**
 - `src/core.js` holds pure computation, with no DOM and no clock: time parsing and formatting, `normRow`, `mergeRows` (merge by RI and sort, keeping completion state), `compute` (legs, restarts, VM, TT, Time Allowance (TA), estimates, close rows), CSV export, `parseCSV` (CSV import), and `parseOCR` (extracting JSON rows from model replies). It is a UMD-style IIFE: it exports via `module.exports` for Node tests, or sets `window.Core` in the browser. Keep it free of side effects so `test/core.test.js` can `require` it.
+- `src/vision.js` holds the pure image functions, also with no DOM and no clock: the sideways pre-pass (`needsTurn`), rule finding, the table frame and perspective correction, bands (`analyzePage`), and sign graphics. An image is RGBA `{data, w, h}`. Its thresholds are in one `K` block. It uses the same dual export pattern, so `test/vision.test.js` can `require` it. The app (`src/app.js`) does the canvas work (decoding, encoding, cropping signs from the original) around it.
 - `src/sample.js` is the invented "Sample Rally" (`{ rally, rows }`: details and rows), used by the unit tests and by the New from sample button. It uses the same dual export pattern.
 - `src/app.js` is the whole UI: tabs (Rallies, Route, Run, Data), modals, and storage. `R()` returns the current rally.
 

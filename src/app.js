@@ -83,7 +83,7 @@ async function loadPageIndex() {
   } catch (e) {}
   pagesReady = true;
   if (lsOK) gcPages();
-  const r = R(); if (r && r.rows.some(x => x.band)) renderView();
+  const r = R(); if (r && r.rows.some(x => x.band || (x.signs && x.signs.length))) renderView();
 }
 // Frees every page copy that no row refers to (and that is not waiting for a read to merge).
 async function gcPages() {
@@ -94,55 +94,57 @@ async function gcPages() {
     if (used.has(id) || pendingPages.has(id)) continue;
     pageIndex.delete(id);
     for (const [k, c] of [...cropCache]) if (k.startsWith(id + '|')) { URL.revokeObjectURL(c.url); cropCache.delete(k); }
+    if (sgURL.has(id)) { URL.revokeObjectURL(sgURL.get(id)); sgURL.delete(id); }
     try { await pageDel(id); } catch (e) {}
   }
 }
-async function grayOf(blob) {                  // grayscale pixels of a page copy, for Core.findBand
-  const bmp = await createImageBitmap(blob);
-  try {
-    const cv = document.createElement('canvas'); cv.width = bmp.width; cv.height = bmp.height;
-    const cx = cv.getContext('2d', { willReadFrequently: true }); cx.drawImage(bmp, 0, 0);
-    const d = cx.getImageData(0, 0, cv.width, cv.height).data, g = new Uint8ClampedArray(cv.width * cv.height);
-    for (let i = 0, j = 0; j < g.length; i += 4, j++) g[j] = (d[i] * 299 + d[i + 1] * 587 + d[i + 2] * 114) / 1000;
-    return { data: g, w: cv.width, h: cv.height };
-  } finally { bmp.close(); }
-}
 const bandKey = b => [b.page, b.top, b.bottom, b.left, b.right].join('|');
-// <img> for a row's band, or '' when it has none or its copy is missing. Crops are made after render (hydrateImages).
-function bandImg(x, cls) {
+// Crop of a row's band from its page copy: {url, w, h}, cached; null when the copy is missing.
+async function bandCrop(b) {
+  const k = bandKey(b); if (cropCache.has(k)) return cropCache.get(k);
+  let bmp;
+  try {
+    const blob = await pageGet(b.page); if (!blob) return null;
+    bmp = await createImageBitmap(blob);
+    const sx = Math.round(b.left * bmp.width), sy = Math.round(b.top * bmp.height), sw = Math.max(1, Math.round((b.right - b.left) * bmp.width)), sh = Math.max(1, Math.round((b.bottom - b.top) * bmp.height));
+    const cv = document.createElement('canvas'); cv.width = sw; cv.height = sh;
+    cv.getContext('2d').drawImage(bmp, sx, sy, sw, sh, 0, 0, sw, sh);
+    const out = await new Promise(res => cv.toBlob(res, 'image/jpeg', 0.85));
+    if (!out) return null;
+    const c = { url: URL.createObjectURL(out), w: sw, h: sh }; cropCache.set(k, c); return c;
+  } catch (e) { return null; } finally { if (bmp) bmp.close(); }
+}
+// Page control (DESIGN § Sign images): a button that opens the row's whole band full screen. '' when the row has no band or its copy is missing.
+function pageBtn(x) {
   const b = x.band; if (!b || !pagesReady || !pageIndex.has(b.page)) return '';
-  const c = cropCache.get(bandKey(b));
-  return `<img class="pgimg ${cls}" role="button" alt="Page image for RI ${esc(x.ri)}" data-pg="${esc(b.page)}" data-b="${b.top},${b.bottom},${b.left},${b.right}"${c ? ` src="${c.url}" style="--nw:${c.w}px;--nh:${c.h}px"` : ' hidden'}>`;
+  return `<button class="pgbtn" data-pg="${esc(b.page)}" data-b="${b.top},${b.bottom},${b.left},${b.right}" aria-label="Show the page image for RI ${esc(x.ri)}">Page</button>`;
+}
+// The instruction with its sign images (rule 14): each [sign: …] is replaced by its image when the counts agree;
+// a tag with no image is a muted placeholder box; otherwise the images follow the text.
+const sgURL = new Map();                          // sign image id -> object URL
+function signHtml(x, cls) {
+  const ids = pagesReady ? (x.signs || []).filter(id => pageIndex.has(id)) : [];
+  const sp = Core.signParts(x.instr, ids.length);
+  const img = (i, alt) => { const id = ids[i], u = sgURL.get(id); return `<img class="sgimg ${cls || ''}" role="button" alt="${esc(alt)}" data-sg="${esc(id)}"${u ? ` src="${u}"` : ''}>`; };
+  let h = sp.parts.map(p => p.t === 'text' ? esc(p.s) : p.img >= 0 ? img(p.img, p.s) : `<span class="sgph">${esc(p.s)}</span>`).join('');
+  if (sp.after.length) h += `<div class="sgafter">${sp.after.map(i => img(i, 'Sign image ' + (i + 1))).join('')}</div>`;
+  return h;
 }
 async function hydrateImages(root) {
-  const byPage = {};
-  root.querySelectorAll('img.pgimg[data-pg]:not([src])').forEach(im => (byPage[im.dataset.pg] = byPage[im.dataset.pg] || []).push(im));
-  for (const [pg, ims] of Object.entries(byPage)) {
-    let bmp;
-    try {
-      const blob = await pageGet(pg); if (!blob) continue;
-      bmp = await createImageBitmap(blob);
-      for (const im of ims) {
-        const [t, bt, l, rt] = im.dataset.b.split(',').map(Number), k = [pg, t, bt, l, rt].join('|');
-        if (!cropCache.has(k)) {
-          const sx = Math.round(l * bmp.width), sy = Math.round(t * bmp.height), sw = Math.max(1, Math.round((rt - l) * bmp.width)), sh = Math.max(1, Math.round((bt - t) * bmp.height));
-          const cv = document.createElement('canvas'); cv.width = sw; cv.height = sh;
-          cv.getContext('2d').drawImage(bmp, sx, sy, sw, sh, 0, 0, sw, sh);
-          const out = await new Promise(res => cv.toBlob(res, 'image/jpeg', 0.85));
-          if (out) cropCache.set(k, { url: URL.createObjectURL(out), w: sw, h: sh });
-        }
-        const c = cropCache.get(k); if (!c) continue;
-        im.style.setProperty('--nw', c.w + 'px'); im.style.setProperty('--nh', c.h + 'px'); im.src = c.url; im.hidden = false;
-      }
-    } catch (e) {} finally { if (bmp) bmp.close(); }
+  for (const im of root.querySelectorAll('img.sgimg:not([src])')) {
+    const id = im.dataset.sg; let u = sgURL.get(id);
+    if (!u) { try { const blob = await pageGet(id); if (blob) { u = URL.createObjectURL(blob); sgURL.set(id, u); } } catch (e) {} }
+    if (u) im.src = u;
   }
 }
-// Tap an image to see it full screen; a tap anywhere closes it. It changes no run state.
-document.addEventListener('click', e => {
-  const im = e.target.closest && e.target.closest('img.pgimg');
-  if (!im || !im.src) return;
-  if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
-  $('imgFull').src = im.src; $('imgView').classList.add('on');
+// Tap a sign image to see it full screen, or the Page control to see the row's whole band; a tap anywhere closes it. It changes no run state.
+function showFull(url) { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); $('imgFull').src = url; $('imgView').classList.add('on'); }
+document.addEventListener('click', async e => {
+  const t = e.target.closest && e.target.closest('img.sgimg, button.pgbtn');
+  if (!t) return;
+  if (t.tagName === 'IMG') { if (t.src) showFull(t.src); return; }
+  const [top, bottom, left, right] = t.dataset.b.split(',').map(Number), c = await bandCrop({ page: t.dataset.pg, top, bottom, left, right });
+  if (c) showFull(c.url);
 });
 $('imgView').onclick = () => { $('imgView').classList.remove('on'); $('imgFull').removeAttribute('src'); };
 
@@ -320,7 +322,9 @@ const pagesOf = id => pagesByRally[id] || (pagesByRally[id] = []);
 function dropPages(id) { (pagesByRally[id] || []).forEach(p => URL.revokeObjectURL(p.url)); delete pagesByRally[id]; }
 function addPhotos(id, files) { for (const f of files) pagesOf(id).push({ file: f, url: URL.createObjectURL(f), state: '', msg: '' }); }
 const OCR_PROMPT = `You are reading ONE photographed page of SCCA RoadRally (TDS, Monte Carlo style) Route Instructions. The page holds a table of numbered Route Instructions; each one is an RI.
-Return ONLY a JSON array, no prose and no code fence. One object per RI row, in page order:
+Return ONLY a JSON object, no prose and no code fence: {"rotation": 0, "rows": [ one object per RI row, in page order ]}.
+"rotation": the clockwise degrees the image must be turned for its text to read upright: 0 if it already does, 180 if it is upside down (90 or 270 only if the text runs sideways).
+Each row object:
 {"ri": RI number as printed (number, or string like "12A"),
  "om": the official mileage (OM) column EXACTLY as printed, as a string, e.g. "2.29"; a restart is printed with a slash, e.g. "13.27/0.00" or "/0.00", and you must keep the slash part,
  "czt": the checkpoint zero time (CZT) as printed ("HH:MM:SS" or "HH:MM.cc"), or null if blank,
@@ -328,10 +332,16 @@ Return ONLY a JSON array, no prose and no code fence. One object per RI row, in 
  "instr": the instruction text exactly as printed (keep quotes, brackets, abbreviations, and exclamation marks); where the row shows a sign graphic or photo, write [sign: …] in its place, giving the words on the sign exactly, or a short description if it has no words, e.g. "CHECKPOINT at [sign: deer crossing]" or "RESTART at [sign: SPEED LIMIT 35]",
  "info": any additional-information or notes text for that row, else "",
  "row": the row's position in the table, counting the ruled rows below the column headings from 1 (a continued part at the top of the page counts as a row),
- "y": the row's vertical centre as a fraction of the image height, 0 at the top edge and 1 at the bottom, to two decimals,
+ "y": the row's vertical centre as a fraction of the image height measured on the image exactly as you were sent it (before any turn), 0 at the top edge and 1 at the bottom, to two decimals,
  "note": include ONLY if something in the row is illegible or uncertain, saying what}
-Include every row, including rows with no CZT. If the page begins with the continuation of an RI from the previous page (a row with no RI number), do not return it, but still count it for "row". Never invent or infer values: use null for blank cells. If the page has no route instruction table, return [].`;
+Include every row, including rows with no CZT. If the page begins with the continuation of an RI from the previous page (a row with no RI number), do not return it, but still count it for "row". Never invent or infer values: use null for blank cells. If the page has no route instruction table, return {"rotation": 0, "rows": []}.`;
 
+// Under a Route row: the instruction with its sign images in place (only when it has any sign tag or image) and the Page control.
+function routeMedia(x) {
+  const hasSigns = (x.signs && x.signs.length) || /\[sign:/i.test(x.instr || ''), pb = pageBtn(x);
+  if (!hasSigns && !pb) return '';
+  return `<tr class="pgrow"><td colspan="5"></td><td colspan="2">${hasSigns ? `<div class="rt-sign">${signHtml(x, 'rt-img')}</div>` : ''}${pb}</td><td></td></tr>`;
+}
 function renderRoute() {
   const r = R(), C = Core.compute(r);
   const pages = pagesOf(r.id), newSet = newOf(r.id);
@@ -366,7 +376,7 @@ function renderRoute() {
   ${flags.length ? `<div class="flags">${flags.slice(0, 8).map(esc).join('<br>')}${flags.length > 8 ? `<br>…and ${flags.length - 8} more` : ''}</div>` : ''}
   <div class="tablewrap"><table id="rtEdit"><thead><tr>
     <th>RI</th><th>OM</th><th title="Restart (OM /0.00)">Rst</th><th>CZT</th><th>CP</th><th>Instruction</th><th>Info</th><th></th></tr></thead>
-  <tbody>${r.rows.map((x, i) => `<tr class="${newSet.has(String(x.ri)) ? 'new' : ''} ${C[i].restart ? 'rs' : ''} ${flags.some(f => f.startsWith('RI ' + x.ri + ':')) ? 'flag' : ''}">
+  <tbody>${r.rows.map((x, i) => `<tr class="${newSet.has(String(x.ri)) ? 'new' : ''} ${C[i].restart ? 'rs' : ''} ${flags.some(f => f.startsWith('RI ' + x.ri + ':')) || (x.band && x.band.pageCheck) || (!x.band && x.imgCheck) ? 'flag' : ''}">
     <td class="c-ri"><input data-i="${i}" data-k="ri" value="${esc(x.ri)}" inputmode="numeric"></td>
     <td class="c-om"><input data-i="${i}" data-k="om" value="${x.om == null ? '' : x.om.toFixed(2)}" inputmode="decimal"></td>
     <td><input type="checkbox" data-i="${i}" data-k="restart" ${C[i].restart ? 'checked' : ''} style="width:22px;min-height:22px"></td>
@@ -374,7 +384,7 @@ function renderRoute() {
     <td class="c-cp"><input data-i="${i}" data-k="cp" value="${esc(x.cp ?? '')}"></td>
     <td class="c-instr"><input data-i="${i}" data-k="instr" value="${esc(x.instr)}"></td>
     <td class="c-info"><input data-i="${i}" data-k="info" value="${esc(x.info)}"></td>
-    <td><button class="x" data-del="${i}" title="Delete row">✕</button></td></tr>${(im => im ? `<tr class="pgrow"><td colspan="5"></td><td colspan="2">${im}</td><td></td></tr>` : '')(bandImg(x, 'rt-img'))}`).join('')}</tbody></table></div>
+    <td><button class="x" data-del="${i}" title="Delete row">✕</button></td></tr>${routeMedia(x)}`).join('')}</tbody></table></div>
   <p class="small muted">OM is the official mileage; a checked Rst box means the OM column shows “/0.00” (odometer restarts at that RI). Times may be typed as HH:MM:SS or HH:MM.cc. When the Route Instructions are right, go to Run.</p>`;
 
   hydrateImages($('routeBody'));
@@ -449,7 +459,7 @@ function renderRoute() {
 }
 
 function routeFlags(r, C) {
-  const f = [];
+  const f = [], imgF = Core.imageFlags(r.rows, pagesReady ? id => pageIndex.has(id) : null);
   let prevOM = null, prevT = null;
   r.rows.forEach((x, i) => {
     if (C[i].restart) { prevOM = 0; prevT = null; }
@@ -458,8 +468,7 @@ function routeFlags(r, C) {
     if (!C[i].restart && x.om != null) prevOM = x.om;
     if (x.czt != null) { if (prevT != null && x.czt < prevT) f.push(`RI ${x.ri}: CZT earlier than the previous CZT`); prevT = x.czt; }
     if (i > 0 && Core.cmpRI(r.rows[i - 1].ri, x.ri) >= 0) f.push(`RI ${x.ri}: out of order (tap Sort by RI)`);
-    if (x.band && pagesReady && !pageIndex.has(x.band.page)) f.push(`RI ${x.ri}: page image missing`);
-    else if (x.band && x.band.check) f.push(`RI ${x.ri}: check page image`);
+    f.push(...imgF[i]);                                               // image flags (Core.imageFlags): one page flag per page whose headings were moved
   });
   return f;
 }
@@ -475,15 +484,45 @@ function mergeIntoRally(rows, label, rid) {
   return `${label}: ${m.added} added, ${m.replaced} replaced`;
 }
 
-async function prepImage(file) {
-  const url = URL.createObjectURL(file);
-  try {
-    const img = await new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = url; });
-    const max = 2000, s = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
-    const cv = document.createElement('canvas'); cv.width = Math.round(img.naturalWidth * s); cv.height = Math.round(img.naturalHeight * s);
-    cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
-    return await new Promise(res => cv.toBlob(res, 'image/jpeg', 0.85));
-  } finally { URL.revokeObjectURL(url); }
+// A page photo as the app reads it: the full-resolution bitmap (EXIF turn applied) for sign crops, and the pixels at up to 2,000 px
+// (DESIGN § Reading pages). Close the bitmap when done.
+async function loadPage(file) {
+  let bmp; try { bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }); } catch (e) { bmp = await createImageBitmap(file); }
+  const s = Math.min(1, 2000 / Math.max(bmp.width, bmp.height)), w = Math.round(bmp.width * s), h = Math.round(bmp.height * s);
+  const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+  const cx = cv.getContext('2d', { willReadFrequently: true }); cx.drawImage(bmp, 0, 0, w, h);
+  const d = cx.getImageData(0, 0, w, h);
+  return { bmp, s, img: { data: d.data, w, h } };
+}
+async function jpegOf(img) {                       // RGBA {data, w, h} -> JPEG blob at quality 0.85
+  const cv = document.createElement('canvas'); cv.width = img.w; cv.height = img.h;
+  cv.getContext('2d').putImageData(new ImageData(img.data, img.w, img.h), 0, 0);
+  return new Promise(res => cv.toBlob(res, 'image/jpeg', 0.85));
+}
+// Rule 13: each graphic is cut from the original photo at full resolution through the same correction as the page copy, at most 800 px
+// on the long side. boxes are fractions of the copy; Mfull takes original pixels to copy pixels. Returns JPEG blobs.
+async function signCrops(bmp, Mfull, copy, boxes) {
+  const inv = Vision.invH(Mfull), out = [];
+  for (const b of boxes) {
+    try {
+      const bx = b.left * copy.w, by = b.top * copy.h, bw = (b.right - b.left) * copy.w, bh = (b.bottom - b.top) * copy.h;
+      const pad = 3, X0 = bx - pad, Y0 = by - pad, W = bw + 2 * pad, Hh = bh + 2 * pad;
+      const cs = [[X0, Y0], [X0 + W, Y0], [X0 + W, Y0 + Hh], [X0, Y0 + Hh]].map(p => Vision.applyH(inv, p[0], p[1]));
+      const rx = Math.max(0, Math.floor(Math.min(...cs.map(c => c[0])) - 2)), ry = Math.max(0, Math.floor(Math.min(...cs.map(c => c[1])) - 2));
+      const rx1 = Math.min(bmp.width, Math.ceil(Math.max(...cs.map(c => c[0])) + 2)), ry1 = Math.min(bmp.height, Math.ceil(Math.max(...cs.map(c => c[1])) + 2));
+      if (rx1 - rx < 2 || ry1 - ry < 2) continue;
+      const rc = document.createElement('canvas'); rc.width = rx1 - rx; rc.height = ry1 - ry;
+      const rcx = rc.getContext('2d', { willReadFrequently: true }); rcx.drawImage(bmp, rx, ry, rc.width, rc.height, 0, 0, rc.width, rc.height);
+      const rd = rcx.getImageData(0, 0, rc.width, rc.height);
+      const o0 = Vision.applyH(inv, X0, Y0), o1 = Vision.applyH(inv, X0 + 1, Y0);
+      const gg = Math.min(Math.hypot(o1[0] - o0[0], o1[1] - o0[1]) || 1, 800 / Math.max(W, Hh));   // output pixels per copy pixel: the original's resolution, at most 800 px
+      const ow = Math.max(1, Math.round(W * gg)), oh = Math.max(1, Math.round(Hh * gg));
+      const M = Vision.mulH([1, 0, -rx, 0, 1, -ry, 0, 0, 1], Vision.mulH(inv, Vision.mulH([1, 0, X0, 0, 1, Y0, 0, 0, 1], [1 / gg, 0, 0, 0, 1 / gg, 0, 0, 0, 1])));
+      const img = Vision.warp({ data: rd.data, w: rc.width, h: rc.height }, M, ow, oh);
+      const blob = await jpegOf(img); if (blob) out.push(blob);
+    } catch (e) { /* this graphic gets no image */ }
+  }
+  return out;
 }
 const blobToB64 = b => new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(',')[1]); fr.onerror = rej; fr.readAsDataURL(b); });
 
@@ -500,7 +539,8 @@ async function ocrOne(blob, model) {
   if (!resp.ok) throw new Error(resp.status === 401 ? 'The API key was rejected (401). Check it on the Route tab.' : resp.status === 402 || resp.status === 403 ? 'The API refused the request (' + resp.status + '). Check the account has credit and the key is allowed to use ' + model + '.' : 'API ' + resp.status + ': ' + (await resp.text()).slice(0, 160));
   const j = await resp.json();
   if (j.stop_reason === 'max_tokens') throw new Error('The reply was cut off (page too long). Select Opus 5.5 and tap Re-read, or split the photo.');
-  return Core.parseOCR((j.content || []).filter(c => c.type === 'text').map(c => c.text).join(''));
+  const text = (j.content || []).filter(c => c.type === 'text').map(c => c.text).join('');
+  return { rows: Core.parseOCR(text), rotation: Core.parseRotation(text) };
 }
 
 const modelName = id => ({ 'claude-sonnet-5-5': 'Sonnet', 'claude-haiku-5-5': 'Haiku', 'claude-opus-5-5': 'Opus' }[id] || id);
@@ -516,32 +556,51 @@ async function readPages(only, model) {
   for (const [p, i] of targets) {
     if (!store.rallies[rid]) break;       // rally deleted while reading: discard
     p.state = 'busy'; p.msg = `Reading (${modelName(model)})…`; redraw();
-    let pid = null;
+    const pend = [];                      // stored images (page copy, sign images) waiting for this read to merge
     try {
-      const blob = await prepImage(p.file);
-      let rows = await ocrOne(blob, model);
-      if (!store.rallies[rid]) break;
-      p.model = model;
-      pid = 'pg' + newId().slice(1);
-      if (rows.length) {                            // page copy and bands; a failure never fails the read
-        let saved = false;
-        pendingPages.add(pid);
-        try { await pagePut(pid, blob); saved = true; } catch (e) { msgs.push('Page images could not be saved on this device; rows from this page have no image.'); }
-        if (saved) {
-          try {
-            const img = await grayOf(blob);
-            rows = rows.map(x => { const b = Core.findBand(img, x.row, x.y); return b ? { ...x, band: { page: pid, ...b } } : x; });
-          } catch (e) {}
+      const pg = await loadPage(p.file);
+      let rows;
+      try {
+        const t = Vision.needsTurn(pg.img), sent = Vision.rotateImg(pg.img, t);          // rule 1: a page shot sideways is turned before it is sent
+        const reply = await ocrOne(await jpegOf(sent), model);
+        rows = reply.rows;
+        if (!store.rallies[rid]) break;
+        p.model = model;
+        if (rows.length) {                            // page copy, bands, and sign images; a failure never fails the read
+          const pid = 'pg' + newId().slice(1); pend.push(pid); pendingPages.add(pid);
+          let res = null;
+          try { res = Vision.analyzePage(sent, rows.map(x => ({ row: x.row, y: x.y, tags: (String(x.instr || '').match(/\[sign:/gi) || []).length })), { rotation: reply.rotation }); } catch (e) {}
+          let saved = false;
+          if (res) try { await pagePut(pid, await jpegOf(res.image)); saved = true; } catch (e) {}
+          if (!saved) msgs.push('Page images could not be saved on this device; rows from this page have no image.');
+          else {
+            // original pixels -> copy pixels: scale to the sent size, the pre-pass turn, the reader's turn, then the table correction
+            const A = Vision.mulH(Vision.rotMatrix(sent.w, sent.h, res.turns), Vision.mulH(Vision.rotMatrix(pg.img.w, pg.img.h, t), [pg.s, 0, 0.5 * pg.s - 0.5, 0, pg.s, 0.5 * pg.s - 0.5, 0, 0, 1]));
+            const Mfull = res.H ? Vision.mulH(res.H, A) : A, next = [];
+            for (let k = 0; k < rows.length; k++) {
+              const rr = res.rows[k]; let x = rows[k];
+              if (rr.band) {
+                const ids = [];
+                for (const blob of rr.boxes.length ? await signCrops(pg.bmp, Mfull, res.image, rr.boxes) : []) {
+                  const sid = 'sg' + newId().slice(1); pend.push(sid); pendingPages.add(sid);
+                  try { await pagePut(sid, blob); ids.push(sid); } catch (e) {}
+                }
+                x = { ...x, band: { page: pid, ...rr.band }, signs: ids };
+              } else x = { ...x, imgCheck: pid };                   // read from this page but no band: flagged, and inside the page flag's range
+              next.push(x);
+            }
+            rows = next;
+          }
         }
-      }
+      } finally { pg.bmp.close(); }
       const by = ` · ${modelName(model)}`;
       if (!rows.length) { p.state = 'bad'; p.msg = 'No Route Instructions found' + by; }
       else { const s = mergeIntoRally(rows, `Page ${i + 1}${by}`, rid); p.state = 'ok'; p.msg = `${rows.length} Route Instructions${by}`; msgs.push(s); }
-      pendingPages.delete(pid); gcPages();
     } catch (e) {
-      p.state = 'bad'; p.msg = 'Failed'; if (pid) { pendingPages.delete(pid); gcPages(); }
+      p.state = 'bad'; p.msg = 'Failed';
       msgs.push(`Page ${i + 1}: ${e && e.message || 'failed'}`);
     }
+    pend.forEach(id => pendingPages.delete(id)); gcPages();
     redraw();
   }
   readingBy.delete(rid); redraw();
@@ -594,21 +653,21 @@ function renderRun() {
       : (c.est != null ? `<div class="big num est">≈${fmtT(c.est)}</div>
           <div class="small muted">est. at ${esc(r.speedo)} mph from RI ${esc(c.estAnchor)}</div>`
       : `<div class="big num muted">—</div><div class="small muted">${x.om == null ? 'no OM, so no VM or estimate' : r.speedo ? 'no earlier TT in this leg' : 'set speedometer for an estimate'}</div>`);
-    const im = bandImg(x, 'ac-img');
-    card = `<div class="active-card${im ? ' hasimg' : ''}">
-      <div class="ac-main${im ? ' has-img' : ''}"><div class="ac-lead">
+    const pb = pageBtn(x);
+    card = `<div class="active-card">
+      <div class="ac-main"><div class="ac-lead">
       <div class="ac-head"><span class="ac-ri">RI ${esc(x.ri)}</span>
         ${c.restart ? '<span class="badge rs">RESTART · zero trip odo</span>' : ''}
         ${x.cp ? `<span class="badge cp">CP ${esc(x.cp)}</span>` : ''}
         ${c.ta ? `<span class="badge ta">TA ${fmtTA(c.ta)}</span>` : ''}
         ${c.gapNext != null && c.gapNext <= Core.closeMi(r) + 1e-9 ? `<span class="badge close">NEXT IN ${c.gapNext.toFixed(2)}</span>` : ''}
-        <span class="progress" style="margin-left:auto">${done}/${r.rows.length} complete</span></div>
+        ${pb}<span class="progress" style="margin-left:auto">${done}/${r.rows.length} complete</span></div>
       <div class="ac-nums">
         <div><div class="lbl">VM</div><div class="big num">${c.restart && c.vmPrevEnd != null ? `<span style="font-size:.55em">${fmtVM(c.vmPrevEnd)}/</span>` : ''}${fmtVM(c.vm) || '—'}</div></div>
         <div><div class="lbl">TT</div>${ttHtml}</div>
       </div>
-      <div class="ac-text"><div class="ac-instr">${esc(x.instr) || '<span class="muted">(no instruction text)</span>'}</div>
-      ${x.info ? `<div class="ac-info">${esc(x.info)}</div>` : ''}</div></div>${im ? `<div class="ac-media">${im}</div>` : ''}</div>
+      <div class="ac-text"><div class="ac-instr">${signHtml(x, 'ac-img') || '<span class="muted">(no instruction text)</span>'}</div>
+      ${x.info ? `<div class="ac-info">${esc(x.info)}</div>` : ''}</div></div></div>
       ${nx ? `<div class="ac-next num">Next: RI ${esc(nx.ri)}${cn.restart ? ' (restart)' : ''} · VM ${fmtVM(cn.vm) || '—'}${cn.tt != null ? ' · TT ' + fmtT(cn.tt) : cn.est != null ? ' · TT ≈' + fmtT(cn.est) : ''} · ${esc(nx.instr)}</div>` : ''}
       <div class="ac-btns"><button id="btnUndo" ${done ? '' : 'disabled'}>Undo</button><button class="primary" id="btnDone">Complete RI ${esc(x.ri)} ✓</button></div>
     </div>
@@ -632,7 +691,7 @@ function renderRun() {
       <td class="n num vm">${c.restart && c.vmPrevEnd != null ? fmtVM(c.vmPrevEnd) + '/' : ''}${fmtVM(c.vm)}</td>
       <td class="n num tt">${tt}</td>
       <td class="col-wide num">${esc(x.cp ?? '')}</td>
-      <td class="instr">${esc(x.instr)}${x.info ? `<div class="info">${esc(x.info)}</div>` : ''}</td></tr>`;
+      <td class="instr">${signHtml(x, 'ls-img')}${x.info ? `<div class="info">${esc(x.info)}</div>` : ''}</td></tr>`;
   }).join('')}</tbody></table></div>`;
 
   hydrateImages(v);
@@ -772,8 +831,8 @@ async function copyText(t, what) {
 function pageImagesLine(r) {
   const ids = Core.pagesUsed(r.rows).filter(p => pageIndex.has(p));
   if (!ids.length) return 'Page images: none';
-  const mb = ids.reduce((n, p) => n + pageIndex.get(p), 0) / 1048576;
-  return `Page images: ${ids.length} ${ids.length === 1 ? 'page' : 'pages'}, ${mb.toFixed(1)} MB on this device`;
+  const mb = ids.reduce((n, p) => n + pageIndex.get(p), 0) / 1048576, pages = ids.filter(p => !p.startsWith('sg')).length;   // the size includes the sign images
+  return `Page images: ${pages} ${pages === 1 ? 'page' : 'pages'}, ${mb.toFixed(1)} MB on this device`;
 }
 function renderData() {
   const r = R();
@@ -816,7 +875,8 @@ function renderData() {
       const j = JSON.parse(await f.text()); const src = j.rally || j;
       if (!Array.isArray(src.rows)) throw new Error('no rows');
       const nr = { ...blankRally(), ...src, id: newId(), updated: now() };
-      nr.rows = nr.rows.map(x => ({ ...Core.normRow(x), band: null }));   // bands are dropped: no page copy comes with the file nr.crew = { driver: '', navigator: '', passengers: [], ...(src.crew || {}) };
+      nr.rows = nr.rows.map(x => ({ ...Core.normRow(x), band: null, signs: [], imgCheck: null }));   // bands and sign images are dropped: no page copy comes with the file
+      nr.crew = { driver: '', navigator: '', passengers: [], ...(src.crew || {}) };
       if (typeof nr.vehicle !== 'string') nr.vehicle = '';
       if (store.rallies[src.id]) nr.name = (nr.name || 'Rally') + ' (imported)';
       store.rallies[nr.id] = nr; store.cur = nr.id; save(nr); toast('Imported ' + (nr.name || 'rally')); renderAll();
@@ -827,7 +887,7 @@ function renderData() {
     r.rows = r.rows.map(x => ({ ...x, done: false, ttDone: null, doneAt: null, estLock: null })); r.taEvents = []; save(r); renderData();
   });
   $('bDup').onclick = () => {
-    const nr = JSON.parse(JSON.stringify(r)); nr.id = newId(); nr.name = (r.name || 'Rally') + ' (copy)'; nr.created = nr.updated = now(); nr.rows.forEach(x => { x.band = null; });
+    const nr = JSON.parse(JSON.stringify(r)); nr.id = newId(); nr.name = (r.name || 'Rally') + ' (copy)'; nr.created = nr.updated = now(); nr.rows.forEach(x => { x.band = null; x.signs = []; x.imgCheck = null; });
     store.rallies[nr.id] = nr; store.cur = nr.id; save(nr); toast('Duplicated'); renderAll();
   };
   $('bDel').onclick = () => confirmBox('Delete rally', `Delete “${esc(r.name || 'Untitled rally')}” and all its data from this device? This cannot be undone. Export it first if you want a record.`, 'Delete', () => {
