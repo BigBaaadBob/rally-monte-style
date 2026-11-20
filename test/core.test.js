@@ -319,6 +319,69 @@ assert.strictEqual(Core.parseOCR('no JSON here at all').length, 0, 'prose with n
   assert.strictEqual(Core.toCSV(R1, 'hms').split(String.fromCharCode(10)).find(l => l.startsWith('OCF,')), 'OCF,' + (1).toFixed(4), 'OCF 1 is written as four decimals');
   assert.strictEqual(Core.fmtOCF(''), '', 'a blank OCF stays blank'); }
 
+// Page images (DESIGN § Reading pages → Page images): band finding on a synthetic ruled page, drawn here from
+// invented content. Row heights vary about 10:1; the first ruled band is the column headings.
+{ const W = 400, H = 1000, data = new Uint8Array(W * H).fill(255);
+  const rules = [20, 60, 90, 390, 450, 480, 600, 640];                       // heading band 20-60, then 6 rows
+  const T = 3;                                                                // rule thickness
+  const vx = [10, 40, 80, 120, 160, 260, 390];                                // 7 column rules: Instruction starts at 160
+  for (const r of rules) for (let t = 0; t < T; t++) for (let x = vx[0]; x < vx[vx.length - 1] + T; x++) data[(r + t) * W + x] = 0;
+  for (const x of vx) for (let t = 0; t < T; t++) for (let y = rules[0]; y < rules[rules.length - 1] + T; y++) data[y * W + x + t] = 0;
+  for (let y = 100; y < 380; y++) for (let x = 200; x < 300; x++) data[y * W + x] = 30;   // a dark "photo" in row 2 (not a rule)
+  const img = { data, w: W, h: H };
+  const mid = i => (rules[i] + T + rules[i + 1]) / 2 / H;                     // y of band i's centre
+  const band = i => ({ top: (rules[i] + T) / H, bottom: rules[i + 1] / H });
+  const close = (b, i, msg) => { near(b.top, band(i).top, 0.0002, msg + ' top'); near(b.bottom, band(i).bottom, 0.0002, msg + ' bottom'); };
+  // columns: from the Instruction column's left rule to the table's right edge
+  const b1 = Core.findBand(img, 1, mid(1));
+  close(b1, 1, 'row 1'); near(b1.left, (vx[4] + T) / W, 0.0002, 'left'); near(b1.right, vx[6] / W, 0.0002, 'right'); assert.ok(!b1.check);
+  // heights vary about 10:1 (band 2 is 300 px, band 4 is 30 px)
+  assert.ok((rules[3] - rules[2]) / (rules[5] - rules[4]) >= 9);
+  // row and y agree, whatever the band's height
+  for (const i of [1, 2, 3, 4, 5, 6]) if (i + 1 < rules.length) { const b = Core.findBand(img, i, mid(i)); close(b, i, 'row ' + i); assert.ok(!b.check, 'agree, no flag'); }
+  // y wins with a flag when it falls in another band
+  const bw = Core.findBand(img, 3, mid(5)); close(bw, 5, 'y wins'); assert.strictEqual(bw.check, true);
+  // row beyond the last band: y decides, flagged
+  const bo = Core.findBand(img, 20, mid(2)); close(bo, 2, 'row out of range'); assert.strictEqual(bo.check, true);
+  // y alone, row alone
+  close(Core.findBand(img, null, mid(4)), 4, 'y only'); close(Core.findBand(img, 4, undefined), 4, 'row only');
+  // y in the heading band or outside the table: the row decides
+  close(Core.findBand(img, 2, 40 / H), 2, 'y in headings');
+  // a continuation fragment at the top is band 1 and counted: the first returned row says row 2
+  close(Core.findBand(img, 2, mid(2)), 2, 'continuation counted');
+  // missing or invalid fields: no band
+  for (const [r, y] of [[null, null], [undefined, undefined], [0, 2], [-1, -0.1], [1.5, 'x'], ['2', NaN], [NaN, Infinity]])
+    assert.strictEqual(Core.findBand(img, r, y), null, `invalid ${r}/${y}`);
+  assert.strictEqual(Core.findBand(img, 20, null), null, 'row beyond the table and no y: no band');
+  // too few rules: centred on y with a fixed margin, spanning the table
+  const blank = { data: new Uint8Array(W * H).fill(255), w: W, h: H };
+  const bf = Core.findBand(blank, 5, 0.5);
+  assert.ok(bf && !bf.check); near((bf.top + bf.bottom) / 2, 0.5, 0.0002, 'centred on y'); near(bf.bottom - bf.top, 0.08, 0.0002, 'fixed margin');
+  assert.strictEqual(Core.findBand(blank, 5, null), null, 'too few rules and no y');
+  const edge = Core.findBand(blank, null, 0.01); assert.strictEqual(edge.top, 0, 'clamped at the page top');
+  // fractions have at most four decimals and stay within 0-1
+  for (const b of [b1, bw, bf]) for (const k of ['top', 'bottom', 'left', 'right']) { assert.ok(b[k] >= 0 && b[k] <= 1); assert.strictEqual(b[k], Math.round(b[k] * 1e4) / 1e4); }
+}
+// band on a row: kept by normRow only when valid; mergeRows (Re-read) replaces it only with a valid new one
+{ const good = { page: 'p1', top: 0.1, bottom: 0.2, left: 0.4, right: 0.95 };
+  assert.deepStrictEqual(Core.normRow({ ri: 1, band: good }).band, good);
+  assert.strictEqual(Core.normRow({ ri: 1, band: { ...good, check: true } }).band.check, true);
+  for (const bad of [null, undefined, {}, { ...good, page: '' }, { ...good, top: 0.3 }, { ...good, left: 1.2 }, { ...good, bottom: 'x' }, 'p1'])
+    assert.strictEqual(Core.normRow({ ri: 1, band: bad }).band, null, JSON.stringify(bad));
+  assert.strictEqual(Core.normRow({ ri: 1 }).band, null, 'hand-added and CSV rows have no band');
+  const old = Core.mergeRows([], [{ ri: 1, om: '1', instr: 'a', band: good }, { ri: 2, om: '2', instr: 'b', band: { ...good, page: 'p2' } }]).rows;
+  const keep = Core.mergeRows(old, [{ ri: 1, om: '1.5', instr: 'a2' }]).rows;                         // no valid band returned
+  assert.deepStrictEqual(keep[0].band, good, 'old band carried forward'); assert.strictEqual(keep[0].instr, 'a2');
+  assert.deepStrictEqual(keep[1].band, old[1].band, 'rows not returned keep their band');
+  const nb = { ...good, page: 'p3', top: 0.5, bottom: 0.6 };
+  const rep = Core.mergeRows(old, [{ ri: 1, om: '1', instr: 'a', band: nb }]).rows;
+  assert.deepStrictEqual(rep[0].band, nb, 'a valid new band replaces the old one');
+  assert.deepStrictEqual(Core.pagesUsed(old).sort(), ['p1', 'p2']);
+  assert.deepStrictEqual(Core.pagesUsed(rep).sort(), ['p2', 'p3'], 'p1 is no longer used, so it is freed');
+  assert.deepStrictEqual(Core.pagesUsed([]), []);
+  assert.deepStrictEqual(Core.pagesUsed(Core.mergeRows([], [{ ri: 1 }]).rows), [], 'no bands, no copies');
+  assert.ok(!Core.toCSV({ ...SAMPLE.rally, rows: old, taEvents: [] }, 'hms').includes('p1'), 'CSV has no image data'); }
+
 // Guard (DESIGN § Testing): the built page makes no claude.ai artifact-runtime calls. Needs `python build.py` first.
 { const fs = require('fs'), path = require('path');
   const built = path.join(__dirname, '..', 'dist', 'index.html');
