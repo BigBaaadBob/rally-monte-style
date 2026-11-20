@@ -43,6 +43,7 @@ node test/core.test.js                     # unit tests for src/core.js (this is
   - `e2e7.py`: Route screen paste and CSV import, Read without an API key, and no offline-copy button (390 only).
   - `pwa.py`: offline cache, update prompt, and API-key reading (photo read, merge by RI, rally switch during a read) with the Anthropic API mocked (390 only). Use it for anything touching install, offline, or API reading.
   - `validation.py`: entry validation for CN, close-RI limit, OCF, OM, and the speedometer (390 only).
+  - `images.py`: page images (issue #6) with the reader mocked and a synthetic ruled page drawn in the browser: bands, page copies in IndexedDB, Route and Run images at all three layouts, tap to expand, Data line, freeing, JSON import and Duplicate, and both failure paths (390 only except the layout checks).
   - `vehicle.py`: the Vehicle field on the set-up form. At all three layouts: its placement below Passengers and its width. At 390 only: persistence, the JSON round trip, old files, and CSV.
 - The guard test is at the end of `test/core.test.js`: it reads `dist/index.html` (run `build.py` first) and fails if it contains a removed claude.ai runtime identifier. CI builds before the unit tests, so it gates the Pages deploy.
 - CI (`.github/workflows/pages.yml`) runs only `python3 build.py` and `node test/core.test.js`. It does not run the e2e tests.

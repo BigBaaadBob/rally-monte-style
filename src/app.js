@@ -48,6 +48,104 @@ function renderStorageWarn() {
 
 function renderStorage() { $('storage').textContent = lsOK ? 'Saved on device' : 'Not saved!'; }
 
+// ---------------------------------------------------------------- page copies (DESIGN § Reading pages → Page images)
+// The image sent to the reader is kept in IndexedDB while a row's band refers to it. pageIndex (id -> bytes)
+// mirrors what is stored, so flags and the Data line stay synchronous; pagesReady is true once it has loaded.
+const IDB_NAME = 'rallyMonteStyle.pages', IDB_STORE = 'pages';
+const pageIndex = new Map(), pendingPages = new Set(), cropCache = new Map();
+let pagesReady = false, persistAsked = false, idbP = null;
+function idb() {
+  if (!idbP) idbP = new Promise((res, rej) => {
+    try { const q = indexedDB.open(IDB_NAME, 1); q.onupgradeneeded = () => q.result.createObjectStore(IDB_STORE); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }
+    catch (e) { rej(e); }
+  });
+  return idbP;
+}
+const idbReq = (mode, fn) => idb().then(db => new Promise((res, rej) => {
+  const tx = db.transaction(IDB_STORE, mode), q = fn(tx.objectStore(IDB_STORE));
+  tx.oncomplete = () => res(q && q.result); tx.onerror = tx.onabort = () => rej(tx.error);
+}));
+const pageGet = id => idbReq('readonly', s => s.get(id));
+const pageDel = id => idbReq('readwrite', s => s.delete(id));
+async function pagePut(id, blob) {
+  await idbReq('readwrite', s => s.put(blob, id));
+  pageIndex.set(id, blob.size);
+  if (!persistAsked && navigator.storage && navigator.storage.persist) { persistAsked = true; try { navigator.storage.persist().catch(() => {}); } catch (e) {} }
+}
+async function loadPageIndex() {
+  try {
+    const db = await idb();
+    await new Promise((res, rej) => {
+      const q = db.transaction(IDB_STORE, 'readonly').objectStore(IDB_STORE).openCursor();
+      q.onsuccess = () => { const c = q.result; if (c) { pageIndex.set(c.key, c.value.size); c.continue(); } else res(); };
+      q.onerror = () => rej(q.error);
+    });
+  } catch (e) {}
+  pagesReady = true;
+  if (lsOK) gcPages();
+  const r = R(); if (r && r.rows.some(x => x.band)) renderView();
+}
+// Frees every page copy that no row refers to (and that is not waiting for a read to merge).
+async function gcPages() {
+  if (!pagesReady || !lsOK) return;
+  const used = new Set();
+  for (const r of Object.values(store.rallies)) Core.pagesUsed(r.rows).forEach(p => used.add(p));
+  for (const id of [...pageIndex.keys()]) {
+    if (used.has(id) || pendingPages.has(id)) continue;
+    pageIndex.delete(id);
+    for (const [k, c] of [...cropCache]) if (k.startsWith(id + '|')) { URL.revokeObjectURL(c.url); cropCache.delete(k); }
+    try { await pageDel(id); } catch (e) {}
+  }
+}
+async function grayOf(blob) {                  // grayscale pixels of a page copy, for Core.findBand
+  const bmp = await createImageBitmap(blob);
+  try {
+    const cv = document.createElement('canvas'); cv.width = bmp.width; cv.height = bmp.height;
+    const cx = cv.getContext('2d', { willReadFrequently: true }); cx.drawImage(bmp, 0, 0);
+    const d = cx.getImageData(0, 0, cv.width, cv.height).data, g = new Uint8ClampedArray(cv.width * cv.height);
+    for (let i = 0, j = 0; j < g.length; i += 4, j++) g[j] = (d[i] * 299 + d[i + 1] * 587 + d[i + 2] * 114) / 1000;
+    return { data: g, w: cv.width, h: cv.height };
+  } finally { bmp.close(); }
+}
+const bandKey = b => [b.page, b.top, b.bottom, b.left, b.right].join('|');
+// <img> for a row's band, or '' when it has none or its copy is missing. Crops are made after render (hydrateImages).
+function bandImg(x, cls) {
+  const b = x.band; if (!b || !pagesReady || !pageIndex.has(b.page)) return '';
+  const c = cropCache.get(bandKey(b));
+  return `<img class="pgimg ${cls}" role="button" alt="Page image for RI ${esc(x.ri)}" data-pg="${esc(b.page)}" data-b="${b.top},${b.bottom},${b.left},${b.right}"${c ? ` src="${c.url}" style="--nw:${c.w}px;--nh:${c.h}px"` : ' hidden'}>`;
+}
+async function hydrateImages(root) {
+  const byPage = {};
+  root.querySelectorAll('img.pgimg[data-pg]:not([src])').forEach(im => (byPage[im.dataset.pg] = byPage[im.dataset.pg] || []).push(im));
+  for (const [pg, ims] of Object.entries(byPage)) {
+    let bmp;
+    try {
+      const blob = await pageGet(pg); if (!blob) continue;
+      bmp = await createImageBitmap(blob);
+      for (const im of ims) {
+        const [t, bt, l, rt] = im.dataset.b.split(',').map(Number), k = [pg, t, bt, l, rt].join('|');
+        if (!cropCache.has(k)) {
+          const sx = Math.round(l * bmp.width), sy = Math.round(t * bmp.height), sw = Math.max(1, Math.round((rt - l) * bmp.width)), sh = Math.max(1, Math.round((bt - t) * bmp.height));
+          const cv = document.createElement('canvas'); cv.width = sw; cv.height = sh;
+          cv.getContext('2d').drawImage(bmp, sx, sy, sw, sh, 0, 0, sw, sh);
+          const out = await new Promise(res => cv.toBlob(res, 'image/jpeg', 0.85));
+          if (out) cropCache.set(k, { url: URL.createObjectURL(out), w: sw, h: sh });
+        }
+        const c = cropCache.get(k); if (!c) continue;
+        im.style.setProperty('--nw', c.w + 'px'); im.style.setProperty('--nh', c.h + 'px'); im.src = c.url; im.hidden = false;
+      }
+    } catch (e) {} finally { if (bmp) bmp.close(); }
+  }
+}
+// Tap an image to see it full screen; a tap anywhere closes it. It changes no run state.
+document.addEventListener('click', e => {
+  const im = e.target.closest && e.target.closest('img.pgimg');
+  if (!im || !im.src) return;
+  if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+  $('imgFull').src = im.src; $('imgView').classList.add('on');
+});
+$('imgView').onclick = () => { $('imgView').classList.remove('on'); $('imgFull').removeAttribute('src'); };
+
 // ---------------------------------------------------------------- UI helpers
 function toast(msg, ms = 2600) { const t = $('toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('on'), ms); }
 function confirmBox(title, bodyHtml, okLabel, onOk, cancelLabel = 'Cancel') {
@@ -227,10 +325,12 @@ Return ONLY a JSON array, no prose and no code fence. One object per RI row, in 
  "om": the official mileage (OM) column EXACTLY as printed, as a string, e.g. "2.29"; a restart is printed with a slash, e.g. "13.27/0.00" or "/0.00", and you must keep the slash part,
  "czt": the checkpoint zero time (CZT) as printed ("HH:MM:SS" or "HH:MM.cc"), or null if blank,
  "cp": checkpoint number if the row names one (e.g. "CP 65" -> 65), else null,
- "instr": the instruction text exactly as printed (keep quotes, brackets, abbreviations, and exclamation marks),
+ "instr": the instruction text exactly as printed (keep quotes, brackets, abbreviations, and exclamation marks); where the row shows a sign graphic or photo, write [sign: …] in its place, giving the words on the sign exactly, or a short description if it has no words, e.g. "CHECKPOINT at [sign: deer crossing]" or "RESTART at [sign: SPEED LIMIT 35]",
  "info": any additional-information or notes text for that row, else "",
+ "row": the row's position in the table, counting the ruled rows below the column headings from 1 (a continued part at the top of the page counts as a row),
+ "y": the row's vertical centre as a fraction of the image height, 0 at the top edge and 1 at the bottom, to two decimals,
  "note": include ONLY if something in the row is illegible or uncertain, saying what}
-Include every row, including rows with no CZT. Never invent or infer values: use null for blank cells. If the page has no route instruction table, return [].`;
+Include every row, including rows with no CZT. If the page begins with the continuation of an RI from the previous page (a row with no RI number), do not return it, but still count it for "row". Never invent or infer values: use null for blank cells. If the page has no route instruction table, return [].`;
 
 function renderRoute() {
   const r = R(), C = Core.compute(r);
@@ -274,9 +374,10 @@ function renderRoute() {
     <td class="c-cp"><input data-i="${i}" data-k="cp" value="${esc(x.cp ?? '')}"></td>
     <td class="c-instr"><input data-i="${i}" data-k="instr" value="${esc(x.instr)}"></td>
     <td class="c-info"><input data-i="${i}" data-k="info" value="${esc(x.info)}"></td>
-    <td><button class="x" data-del="${i}" title="Delete row">✕</button></td></tr>`).join('')}</tbody></table></div>
+    <td><button class="x" data-del="${i}" title="Delete row">✕</button></td></tr>${(im => im ? `<tr class="pgrow"><td colspan="5"></td><td colspan="2">${im}</td><td></td></tr>` : '')(bandImg(x, 'rt-img'))}`).join('')}</tbody></table></div>
   <p class="small muted">OM is the official mileage; a checked Rst box means the OM column shows “/0.00” (odometer restarts at that RI). Times may be typed as HH:MM:SS or HH:MM.cc. When the Route Instructions are right, go to Run.</p>`;
 
+  hydrateImages($('routeBody'));
   $('fPages').onchange = e => {
     addPhotos(r.id, e.target.files);
     e.target.value = ''; renderRoute();
@@ -316,7 +417,7 @@ function renderRoute() {
   $('btnClearRI').onclick = () => confirmBox('Clear Route Instructions', (r.rows.length === 1
     ? `Clear the 1 Route Instruction and its run data from “${esc(r.name || 'this rally')}”? This cannot be undone.`
     : `Clear all ${r.rows.length} Route Instructions and their run data from “${esc(r.name || 'this rally')}”? This cannot be undone.`), 'Clear', () => {
-    r.rows = []; r.taEvents = []; newOf(r.id).clear(); save(r); renderRoute();
+    r.rows = []; r.taEvents = []; newOf(r.id).clear(); save(r); gcPages(); renderRoute();
   });
   $('btnPaste').onclick = pasteRows;
   const tb = document.querySelector('#rtEdit tbody');
@@ -342,7 +443,7 @@ function renderRoute() {
     const i = +b.dataset.del, x = r.rows[i];
     confirmBox('Delete row', `Delete RI ${esc(x.ri)}${x.instr ? ' (“' + esc(x.instr) + '”)' : ''}?`, 'Delete', () => {
       r.taEvents = (r.taEvents || []).filter(e => !Core.sameRI(e.ri, x.ri));
-      r.rows.splice(i, 1); save(r); renderRoute();
+      r.rows.splice(i, 1); save(r); gcPages(); renderRoute();
     });
   });
 }
@@ -357,6 +458,8 @@ function routeFlags(r, C) {
     if (!C[i].restart && x.om != null) prevOM = x.om;
     if (x.czt != null) { if (prevT != null && x.czt < prevT) f.push(`RI ${x.ri}: CZT earlier than the previous CZT`); prevT = x.czt; }
     if (i > 0 && Core.cmpRI(r.rows[i - 1].ri, x.ri) >= 0) f.push(`RI ${x.ri}: out of order (tap Sort by RI)`);
+    if (x.band && pagesReady && !pageIndex.has(x.band.page)) f.push(`RI ${x.ri}: page image missing`);
+    else if (x.band && x.band.check) f.push(`RI ${x.ri}: check page image`);
   });
   return f;
 }
@@ -379,7 +482,7 @@ async function prepImage(file) {
     const max = 2000, s = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
     const cv = document.createElement('canvas'); cv.width = Math.round(img.naturalWidth * s); cv.height = Math.round(img.naturalHeight * s);
     cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
-    return await new Promise(res => cv.toBlob(res, 'image/jpeg', 0.88));
+    return await new Promise(res => cv.toBlob(res, 'image/jpeg', 0.85));
   } finally { URL.revokeObjectURL(url); }
 }
 const blobToB64 = b => new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(',')[1]); fr.onerror = rej; fr.readAsDataURL(b); });
@@ -413,15 +516,30 @@ async function readPages(only, model) {
   for (const [p, i] of targets) {
     if (!store.rallies[rid]) break;       // rally deleted while reading: discard
     p.state = 'busy'; p.msg = `Reading (${modelName(model)})…`; redraw();
+    let pid = null;
     try {
-      const rows = await ocrOne(await prepImage(p.file), model);
+      const blob = await prepImage(p.file);
+      let rows = await ocrOne(blob, model);
       if (!store.rallies[rid]) break;
       p.model = model;
+      pid = 'pg' + newId().slice(1);
+      if (rows.length) {                            // page copy and bands; a failure never fails the read
+        let saved = false;
+        pendingPages.add(pid);
+        try { await pagePut(pid, blob); saved = true; } catch (e) { msgs.push('Page images could not be saved on this device; rows from this page have no image.'); }
+        if (saved) {
+          try {
+            const img = await grayOf(blob);
+            rows = rows.map(x => { const b = Core.findBand(img, x.row, x.y); return b ? { ...x, band: { page: pid, ...b } } : x; });
+          } catch (e) {}
+        }
+      }
       const by = ` · ${modelName(model)}`;
       if (!rows.length) { p.state = 'bad'; p.msg = 'No Route Instructions found' + by; }
       else { const s = mergeIntoRally(rows, `Page ${i + 1}${by}`, rid); p.state = 'ok'; p.msg = `${rows.length} Route Instructions${by}`; msgs.push(s); }
+      pendingPages.delete(pid); gcPages();
     } catch (e) {
-      p.state = 'bad'; p.msg = 'Failed';
+      p.state = 'bad'; p.msg = 'Failed'; if (pid) { pendingPages.delete(pid); gcPages(); }
       msgs.push(`Page ${i + 1}: ${e && e.message || 'failed'}`);
     }
     redraw();
@@ -476,7 +594,9 @@ function renderRun() {
       : (c.est != null ? `<div class="big num est">≈${fmtT(c.est)}</div>
           <div class="small muted">est. at ${esc(r.speedo)} mph from RI ${esc(c.estAnchor)}</div>`
       : `<div class="big num muted">—</div><div class="small muted">${x.om == null ? 'no OM, so no VM or estimate' : r.speedo ? 'no earlier TT in this leg' : 'set speedometer for an estimate'}</div>`);
-    card = `<div class="active-card">
+    const im = bandImg(x, 'ac-img');
+    card = `<div class="active-card${im ? ' hasimg' : ''}">
+      <div class="ac-main${im ? ' has-img' : ''}"><div class="ac-lead">
       <div class="ac-head"><span class="ac-ri">RI ${esc(x.ri)}</span>
         ${c.restart ? '<span class="badge rs">RESTART · zero trip odo</span>' : ''}
         ${x.cp ? `<span class="badge cp">CP ${esc(x.cp)}</span>` : ''}
@@ -487,8 +607,8 @@ function renderRun() {
         <div><div class="lbl">VM</div><div class="big num">${c.restart && c.vmPrevEnd != null ? `<span style="font-size:.55em">${fmtVM(c.vmPrevEnd)}/</span>` : ''}${fmtVM(c.vm) || '—'}</div></div>
         <div><div class="lbl">TT</div>${ttHtml}</div>
       </div>
-      <div class="ac-instr">${esc(x.instr) || '<span class="muted">(no instruction text)</span>'}</div>
-      ${x.info ? `<div class="ac-info">${esc(x.info)}</div>` : ''}
+      <div class="ac-text"><div class="ac-instr">${esc(x.instr) || '<span class="muted">(no instruction text)</span>'}</div>
+      ${x.info ? `<div class="ac-info">${esc(x.info)}</div>` : ''}</div></div>${im ? `<div class="ac-media">${im}</div>` : ''}</div>
       ${nx ? `<div class="ac-next num">Next: RI ${esc(nx.ri)}${cn.restart ? ' (restart)' : ''} · VM ${fmtVM(cn.vm) || '—'}${cn.tt != null ? ' · TT ' + fmtT(cn.tt) : cn.est != null ? ' · TT ≈' + fmtT(cn.est) : ''} · ${esc(nx.instr)}</div>` : ''}
       <div class="ac-btns"><button id="btnUndo" ${done ? '' : 'disabled'}>Undo</button><button class="primary" id="btnDone">Complete RI ${esc(x.ri)} ✓</button></div>
     </div>
@@ -515,6 +635,7 @@ function renderRun() {
       <td class="instr">${esc(x.instr)}${x.info ? `<div class="info">${esc(x.info)}</div>` : ''}</td></tr>`;
   }).join('')}</tbody></table></div>`;
 
+  hydrateImages(v);
   const w = $('runWrap'), t = v.querySelector('.runtop');
   const first = !runPos[r.id];                       // first time this rally's list is shown this session
   const pos = runPos[r.id] || (runPos[r.id] = { list: 0, top: 0 });
@@ -648,6 +769,12 @@ async function copyText(t, what) {
   try { await navigator.clipboard.writeText(t); toast(what + ' copied'); }
   catch (e) { confirmBox('Copy ' + what, `<textarea rows="10" readonly style="font-size:12px">${esc(t)}</textarea>`, 'Close', null, ''); }
 }
+function pageImagesLine(r) {
+  const ids = Core.pagesUsed(r.rows).filter(p => pageIndex.has(p));
+  if (!ids.length) return 'Page images: none';
+  const mb = ids.reduce((n, p) => n + pageIndex.get(p), 0) / 1048576;
+  return `Page images: ${ids.length} ${ids.length === 1 ? 'page' : 'pages'}, ${mb.toFixed(1)} MB on this device`;
+}
 function renderData() {
   const r = R();
   const done = r.rows.filter(x => x.done).length;
@@ -656,6 +783,7 @@ function renderData() {
   <div class="card"><h2>${esc(r.name || 'Untitled rally')}</h2>
     <div class="small">${esc(r.date)} · Car ${esc(r.cn)} · Class ${esc(r.cls || '—')} · OCF ${esc(fmtOCF(r.ocf))} · Driver ${esc(r.crew.driver || '—')} · Navigator ${esc(r.crew.navigator || '—')}${r.crew.passengers.filter(Boolean).length ? ' · Passengers ' + esc(r.crew.passengers.filter(Boolean).join(', ')) : ''}</div>
     <div class="small muted" style="margin-top:4px">${r.rows.length} Route Instructions · ${done} complete · TAs entered: ${tas.length ? tas.map(t => `RI ${esc(t.ri)} ${fmtTA(t.ta)}`).join(', ') : 'none'}</div>
+    <div class="small muted" style="margin-top:4px">${pageImagesLine(r)}</div>
     <div class="small muted" style="margin-top:4px">Storage: ${lsOK ? 'saved on this device' : 'NOT saved on this device'}.</div>
   </div>
   <div class="card"><h3>Export</h3>
@@ -688,7 +816,7 @@ function renderData() {
       const j = JSON.parse(await f.text()); const src = j.rally || j;
       if (!Array.isArray(src.rows)) throw new Error('no rows');
       const nr = { ...blankRally(), ...src, id: newId(), updated: now() };
-      nr.rows = nr.rows.map(Core.normRow); nr.crew = { driver: '', navigator: '', passengers: [], ...(src.crew || {}) };
+      nr.rows = nr.rows.map(x => ({ ...Core.normRow(x), band: null }));   // bands are dropped: no page copy comes with the file nr.crew = { driver: '', navigator: '', passengers: [], ...(src.crew || {}) };
       if (typeof nr.vehicle !== 'string') nr.vehicle = '';
       if (store.rallies[src.id]) nr.name = (nr.name || 'Rally') + ' (imported)';
       store.rallies[nr.id] = nr; store.cur = nr.id; save(nr); toast('Imported ' + (nr.name || 'rally')); renderAll();
@@ -699,11 +827,11 @@ function renderData() {
     r.rows = r.rows.map(x => ({ ...x, done: false, ttDone: null, doneAt: null, estLock: null })); r.taEvents = []; save(r); renderData();
   });
   $('bDup').onclick = () => {
-    const nr = JSON.parse(JSON.stringify(r)); nr.id = newId(); nr.name = (r.name || 'Rally') + ' (copy)'; nr.created = nr.updated = now();
+    const nr = JSON.parse(JSON.stringify(r)); nr.id = newId(); nr.name = (r.name || 'Rally') + ' (copy)'; nr.created = nr.updated = now(); nr.rows.forEach(x => { x.band = null; });
     store.rallies[nr.id] = nr; store.cur = nr.id; save(nr); toast('Duplicated'); renderAll();
   };
   $('bDel').onclick = () => confirmBox('Delete rally', `Delete “${esc(r.name || 'Untitled rally')}” and all its data from this device? This cannot be undone. Export it first if you want a record.`, 'Delete', () => {
-    delete store.rallies[r.id]; delete runPos[r.id]; dropPages(r.id); delete newByRally[r.id]; store.cur = null; save(); show('rallies');
+    delete store.rallies[r.id]; delete runPos[r.id]; dropPages(r.id); delete newByRally[r.id]; store.cur = null; save(); gcPages(); show('rallies');
   });
 }
 
@@ -714,6 +842,7 @@ applyTheme();
   if (store.cur && !store.rallies[store.cur]) store.cur = null;
   show(['setup', 'route', 'run', 'data'].includes(h) && R() ? h : (R() && R().rows.length ? 'run' : 'rallies'));
   renderStorageWarn();
+  loadPageIndex();
 })();
 window.addEventListener('hashchange', () => { const h = location.hash.slice(1); if (h && h !== view && ['rallies', 'setup', 'route', 'run', 'data'].includes(h)) show(h); });
 // ---------------------------------------------------------------- offline cache (hosted app only)

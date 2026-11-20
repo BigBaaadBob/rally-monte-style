@@ -78,7 +78,80 @@
       info: ((x.info || '') + (x.note ? ` [OCR: ${x.note}]` : '')).trim(),
       done: !!x.done, ttDone: x.ttDone ?? null, doneAt: x.doneAt ?? null,
       estLock: x.estLock ?? null,
+      band: normBand(x.band),
     };
+  }
+
+  // ---------- page images (DESIGN § Reading pages → Page images) ----------
+  // A band is {page, top, bottom, left, right}: a page copy id and fractions (0-1) of that copy.
+  // check:true marks a band where the reader's y overrode its row (flagged on Route).
+  function normBand(b) {
+    if (!b || typeof b !== 'object' || typeof b.page !== 'string' || !b.page) return null;
+    const f = v => typeof v === 'number' && isFinite(v) && v >= 0 && v <= 1;
+    if (![b.top, b.bottom, b.left, b.right].every(f) || !(b.top < b.bottom) || !(b.left < b.right)) return null;
+    const out = { page: b.page, top: b.top, bottom: b.bottom, left: b.left, right: b.right };
+    if (b.check) out.check = true;
+    return out;
+  }
+  const pagesUsed = rows => [...new Set(rows.map(x => x.band && x.band.page).filter(Boolean))];
+
+  // Heavy full-width row rules and full-height column rules in a grayscale image {data, w, h}.
+  function findRules(img) {
+    const { data, w, h } = img, DARK = 110;
+    const hs = [];                                   // [start,end] pixel rows that are rule lines
+    let x0 = w, x1 = 0;
+    for (let y = 0; y < h; y++) {
+      let best = 0, bs = 0, run = 0, rs = 0;
+      for (let x = 0; x < w; x++) {
+        if (data[y * w + x] < DARK) { if (!run) rs = x; run++; if (run > best) { best = run; bs = rs; } } else run = 0;
+      }
+      if (best >= 0.7 * w) { hs.push(y); x0 = Math.min(x0, bs); x1 = Math.max(x1, bs + best); }
+    }
+    const group = idx => {                           // consecutive indices (gap of 1 allowed) -> [{s, e}]
+      const out = [];
+      for (const i of idx) { const g = out[out.length - 1]; if (g && i - g.e <= 2) g.e = i; else out.push({ s: i, e: i }); }
+      return out;
+    };
+    const hr = group(hs);
+    let vr = [];
+    if (hr.length >= 2) {
+      const y0 = hr[0].s, y1 = hr[hr.length - 1].e, span = y1 - y0 + 1, vs = [];
+      for (let x = 0; x < w; x++) {
+        let c = 0;
+        for (let y = y0; y <= y1; y++) if (data[y * w + x] < DARK) c++;
+        if (c >= 0.7 * span) vs.push(x);
+      }
+      vr = group(vs);
+    }
+    return { hr, vr, x0: hs.length ? x0 : null, x1: hs.length ? x1 : null };
+  }
+
+  // The image band for one reader row, or null (no image). img = {data: gray bytes, w, h}; row and y as the
+  // reader returned them (invalid or missing values are ignored). The first ruled band is the column headings,
+  // so row n is the nth ruled band after it. Returns {top, bottom, left, right, check}, fractions to 4 decimals.
+  function findBand(img, row, y) {
+    const okRow = Number.isInteger(row) && row > 0;
+    const okY = typeof y === 'number' && isFinite(y) && y >= 0 && y <= 1;
+    if (!okRow && !okY) return null;
+    const q = v => Math.round(Math.min(1, Math.max(0, v)) * 10000) / 10000;
+    const { w, h } = img;
+    const R = findRules(img), hr = R.hr, vr = R.vr;
+    const x0 = R.x0 != null ? R.x0 : 0.05 * w, x1 = R.x1 != null ? R.x1 : 0.95 * w;
+    const left = vr.length >= 3 ? vr[vr.length - 3].e + 1 : x0 + 0.4 * (x1 - x0);
+    const right = vr.length >= 3 ? vr[vr.length - 1].s : x1;
+    const out = (top, bottom, check) => (bottom > top && right > left)
+      ? { top: q(top / h), bottom: q(bottom / h), left: q(left / w), right: q(right / w), check: !!check } : null;
+    if (hr.length >= 3) {
+      const bandAt = yy => { for (let i = 1; i < hr.length - 1; i++) if (yy >= hr[i].e + 1 && yy < hr[i + 1].s) return i; return -1; };
+      const rowBand = okRow && row < hr.length - 1 ? row : -1;
+      const yBand = okY ? bandAt(y * h) : -1;
+      const i = yBand >= 0 ? yBand : rowBand;
+      if (i >= 1) return out(hr[i].e + 1, hr[i + 1].s, okRow && yBand >= 0 && rowBand !== yBand);
+      if (!okY) return null;                         // row names a band that is not there and y gives none
+    }
+    if (!okY) return null;                           // too few rules and no y
+    const M = 0.04 * h;                              // fixed margin each side of y
+    return out(Math.max(0, y * h - M), Math.min(h, y * h + M), false);
   }
 
   // Merge by RI (new data replaces old text; completion state is kept), then sort.
@@ -91,7 +164,7 @@
       const i = out.findIndex(o => sameRI(o.ri, r.ri));
       if (i >= 0) {
         const o = out[i];
-        out[i] = { ...r, done: o.done, ttDone: o.ttDone, doneAt: o.doneAt, estLock: o.estLock };
+        out[i] = { ...r, done: o.done, ttDone: o.ttDone, doneAt: o.doneAt, estLock: o.estLock, band: r.band || o.band };
         replaced++;
       } else { out.push(r); added++; }
     }
@@ -287,6 +360,7 @@
   }
 
   const Core = { parseTOD, fmtTOD, parseTA, fmtTA, TA_MAX, cmpRI, sameRI, normRow, mergeRows, compute, activeIndex, legOf,
-    setTA, renameRI, completeActive, CLOSE_MI, closeMi, fmtOCF, uncomplete, lastCompleted, toCSV, parseCSV, parseOCR };
+    setTA, renameRI, completeActive, CLOSE_MI, closeMi, fmtOCF, uncomplete, lastCompleted, toCSV, parseCSV, parseOCR,
+    normBand, pagesUsed, findBand };
   if (typeof module !== 'undefined' && module.exports) module.exports = Core; else root.Core = Core;
 })(typeof window !== 'undefined' ? window : globalThis);

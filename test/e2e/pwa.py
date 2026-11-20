@@ -24,7 +24,7 @@ def serve():
 def canned(n, model):
     # Invented reader reply: the first read returns RI 301 and RI 302; a re-read returns only 301, with the model in its text.
     ris = [301, 302] if n == 1 else [301]
-    return [{'ri': ri, 'om': '1.10', 'czt': None, 'cp': None, 'instr': f'L at T by {model}', 'info': ''} for ri in ris]
+    return [{'ri': ri, 'om': '1.10', 'czt': None, 'cp': None, 'instr': f'L at T by {model}', 'info': '', 'row': k + 1, 'y': round(0.3 + 0.2 * k, 2)} for k, ri in enumerate(ris)]
 
 async def main():
     srv = serve()
@@ -111,7 +111,7 @@ async def main():
             await pg.screenshot(path=str(OUT_DIR / 'pwa-route.png'))
             # DESIGN § Reading pages → Page photos: photos are per rally, removable one at a time with a confirm, and reads merge into the owning rally.
             def tagged(tag, base):
-                return [{'ri': base + k, 'om': '2.00', 'czt': None, 'cp': None, 'instr': tag, 'info': ''} for k in range(2)]
+                return [{'ri': base + k, 'om': '2.00', 'czt': None, 'cp': None, 'instr': tag, 'info': '', 'row': k + 1, 'y': round(0.3 + 0.2 * k, 2)} for k in range(2)]
             def png(name): return {'name': name, 'mimeType': 'image/png', 'buffer': PAGE.read_bytes()}
             async def open_route(rid):
                 await pg.click('#tabs button[data-v=rallies]'); await pg.click(f'[data-open="{rid}"]'); await pg.click('#tabs button[data-v=route]')
