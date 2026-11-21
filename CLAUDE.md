@@ -49,12 +49,39 @@ node test/vision.test.js                   # unit tests for src/vision.js (band 
 - The guard test is at the end of `test/core.test.js`: it reads `dist/index.html` (run `build.py` first) and fails if it contains a removed claude.ai runtime identifier. CI builds before the unit tests, so it gates the Pages deploy.
 - CI (`.github/workflows/pages.yml`) runs only `python3 build.py`, `node test/core.test.js`, and `node test/vision.test.js`. It does not run the e2e tests.
 
+### Real-document evaluation
+
+Rule:
+
+- Claude Code may run its code locally against the owner's private evaluation set (location given by the owner in the session, outside the repo), working from numbers and viewing its own scratch output when needed. Nothing from those files, or derived from them, goes into the repo, a commit, the PR, or an issue. The PR reports results by page number only.
+- Evaluate the shipped code through the app's own path in Chromium (`createImageBitmap` with `from-image`, the canvas downscale, the pre-pass, `src/vision.js` including `signCrops`), never a prototype or a harness that decodes or resamples differently.
+- Desktop Chromium can differ from devices and Firefox, so the Firefox branch check and the device check after merge stay the final gates.
+
+Method:
+
+- Record real reader replies once on `main` and replay them for both the before and the after runs, so the reader is held constant.
+- Recorded replies are valid only for the OCR prompt and sent image they were recorded with. Any change to either (for example #69's prompt change) means re-recording before the next evaluation.
+- Also run a mock-tag run (3 tags per row). Mock replies carry each page's recorded rotation; a mock with rotation 0 on an upside-down photo once produced a false 0/5.
+- Score sign images against the private ground truth (graphics per row position, counts only) as hits and false positives.
+- Per page, report column and row rules found, bands by `src`, the flags, and sign hits and false positives.
+- Time each page in desktop Chromium, unthrottled and at 4× CPU throttle, and measure peak memory per page.
+- Convert tablet HEIC photos to upright JPEGs first, as Safari does.
+- "Before" is `main`, rebuilt and measured in the same session on the same machine, never stored numbers from an earlier run. This file states how to measure, not limits; limits come from each brief.
+
+Stop on worse (default): if any page is worse than the baseline, or a limit set by the brief is hit, Claude Code stops and reports by page number for the owner's decision. It does not weigh trade-offs on its own. Claude Code never changes a threshold unless the brief says to. Worse means fewer hits, more false positives, or changed bands or flags than the baseline, or more column rules than the table has.
+
+Unconfirmed failures: a failure seen only through a mock or a harness is a hypothesis. Report it as unconfirmed until it is checked on recorded real replies, and build no issue on it before then.
+
+Harness: the evaluation harness is kept with the evaluation set outside the repo, its location is given in the session, and it is never copied into the repo. Before reuse, check it against current `main`: its paths, that its truth counts are in step with the ground truth, and that it drives the built app rather than decoding or resampling on its own.
+
+Evaluation key: the owner sets `RALLY_EVAL_API_KEY` for the recording session only, never `ANTHROPIC_API_KEY` (Claude Code uses it for its own sign-in). The harness reads it in record mode only, and the owner removes it after recording. Claude Code checks that it is set by printing its length, never its value. It never appears in a file, log, recorded reply, or output.
+
 ## Rules for every change
 
 - When behavior changes, update `docs/DESIGN.md` in the same change.
 - Every change to `src/core.js` computation gets a unit test in `test/core.test.js`.
 - Before finishing a change, run the tests: all of them via `run_all.py`, or at least the unit tests plus the relevant e2e script. See `## Testing` for which script covers what.
-- Never commit API keys. The Anthropic key lives only in each device's localStorage.
+- Never commit, log, print, or write an API key anywhere. In the app, the user's Anthropic key lives only in each device's localStorage; for evaluation, see § Testing.
 
 ## Workflow
 
@@ -67,6 +94,7 @@ Three project skills in `.claude/skills/` drive the issue-to-merge loop. Each ru
 Merging is done by the owner on GitHub after review.
 
 - Briefs are written in a separate claude.ai chat and posted as an issue comment headed "Brief for #n". This session cannot see that chat; the issue comment is the only hand-off.
+- A bug's stated cause in an issue or brief is a hypothesis: reproduce the symptom before fixing, and report it if the cause turns out different.
 - Don't push, open pull requests, or switch branches outside these skills unless I ask explicitly. If I ask to push or open a PR, suggest `/ship` instead.
 - Never offer `/start-issue`, `/ship`, or `/finish` as a choice or button; they run only when the owner types them, so a button for one always fails. When implementation is done and tests pass, end with a plain line such as "Ready to ship. Type `/ship`." with no multiple-choice question.
 - Never offer, suggest, or enable Auto-fix or auto-merge for a PR, and don't ask about them. Fixes to an open PR are made on its branch in a local session and pushed with `/ship`, so the DESIGN.md check, the test run, and the secrets and personal-information scan always apply. Reason: this repo is public, and Auto-fix can be woken by anyone's PR comment.
