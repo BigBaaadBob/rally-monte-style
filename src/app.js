@@ -345,7 +345,7 @@ function routeMedia(x) {
 function renderRoute() {
   const r = R(), C = Core.compute(r);
   const pages = pagesOf(r.id), newSet = newOf(r.id);
-  const flags = routeFlags(r, C);
+  const flags = routeFlags(r, C), noSign = new Set(Core.noSignRows(r.rows));   // tagged rows with no sign image highlight (Core.noSignRows)
   const canOCR = !!getApiKey();
   $('routeBody').innerHTML = `
   <div class="card narrow" style="max-width:none">
@@ -376,7 +376,7 @@ function renderRoute() {
   ${flags.length ? `<div class="flags">${flags.slice(0, 8).map(esc).join('<br>')}${flags.length > 8 ? `<br>…and ${flags.length - 8} more` : ''}</div>` : ''}
   <div class="tablewrap"><table id="rtEdit"><thead><tr>
     <th>RI</th><th>OM</th><th title="Restart (OM /0.00)">Rst</th><th>CZT</th><th>CP</th><th>Instruction</th><th>Info</th><th></th></tr></thead>
-  <tbody>${r.rows.map((x, i) => `<tr class="${newSet.has(String(x.ri)) ? 'new' : ''} ${C[i].restart ? 'rs' : ''} ${flags.some(f => f.startsWith('RI ' + x.ri + ':')) || (x.band && x.band.pageCheck) || (!x.band && x.imgCheck) ? 'flag' : ''}">
+  <tbody>${r.rows.map((x, i) => `<tr class="${newSet.has(String(x.ri)) ? 'new' : ''} ${C[i].restart ? 'rs' : ''} ${flags.some(f => f.startsWith('RI ' + x.ri + ':')) || (x.band && x.band.pageCheck) || (!x.band && x.imgCheck) || noSign.has(i) ? 'flag' : ''}">
     <td class="c-ri"><input data-i="${i}" data-k="ri" value="${esc(x.ri)}" inputmode="numeric"></td>
     <td class="c-om"><input data-i="${i}" data-k="om" value="${x.om == null ? '' : x.om.toFixed(2)}" inputmode="decimal"></td>
     <td><input type="checkbox" data-i="${i}" data-k="restart" ${C[i].restart ? 'checked' : ''} style="width:22px;min-height:22px"></td>
@@ -486,8 +486,11 @@ function mergeIntoRally(rows, label, rid) {
 
 // A page photo as the app reads it: the full-resolution bitmap (EXIF turn applied) for sign crops, and the pixels at up to 2,000 px
 // (DESIGN § Reading pages). Close the bitmap when done.
+// The one place the original photo is read (DESIGN § Sign images): the browser's own decode with the EXIF orientation applied. The page copy,
+// the pre-pass, and every sign crop come from this bitmap, so they all share one oriented image. Nothing here switches on orientation values.
+const decodeOriented = file => createImageBitmap(file, { imageOrientation: 'from-image' });
 async function loadPage(file) {
-  let bmp; try { bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }); } catch (e) { bmp = await createImageBitmap(file); }
+  const bmp = await decodeOriented(file);
   const s = Math.min(1, 2000 / Math.max(bmp.width, bmp.height)), w = Math.round(bmp.width * s), h = Math.round(bmp.height * s);
   const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
   const cx = cv.getContext('2d', { willReadFrequently: true }); cx.drawImage(bmp, 0, 0, w, h);

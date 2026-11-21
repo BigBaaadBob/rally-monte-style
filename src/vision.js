@@ -27,7 +27,6 @@
     COPY_MAX: 2000,       // page copy: longest side in pixels
     FALLBACK: 0.04,       // rule 8: half-height of the fallback band (fraction of the page height)
     PAGE_MIN_ROWS: 2,     // rule 7: rows that must agree before the headings offset is overridden
-    SIGN_MIN_V: 7,        // rule 10: column rules needed to find the Instruction cell
     CELL_MX: 6, CELL_MY: 7,       // rule 10: pixels kept clear of the cell's rules (at 1,500 px page width)
     JOIN_W: 5, JOIN_H: 1,         // rule 12: ink joins sideways (radius) but not between lines
     TALL: 1.8, WIDE: 1.2, // rule 12: a graphic is taller / wider than this many text heights
@@ -444,7 +443,7 @@
   // ordered top to bottom then left to right. A row without tags, or without a band, gets none.
   function signBoxes(R, G, specs, head) {
     const { w, h, bin } = R, V = G.V, n = V.length, none = specs.map(() => []);
-    if (n < K.SIGN_MIN_V) return none;
+    if (n < 3) return none;                                            // rule 10: the Instruction cell is found from the right edge (as the band is), so only 3 column rules are needed, not a fixed count
     const sc = w / 1500, mx = Math.round(K.CELL_MX * sc), my = Math.round(K.CELL_MY * sc), gap = Math.max(2, Math.round(K.MERGE_GAP * sc)), xc = G.xc;
     const L = V[n - 3], Rr = V[n - 2], cells = new Map(), heights = [];
     const cellOf = k => {

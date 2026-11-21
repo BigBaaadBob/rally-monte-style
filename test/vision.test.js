@@ -199,4 +199,27 @@ for (const [name, o] of Object.entries(variants)) {
   const mix = drawPage({ ...pageOpts, map: false, streak: 0, signs: [{ row: 8, kind: 'diamond', dy: 90 }], lines: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1] }), pm = photograph(mix, {});
   const rm = analyze(pm.img, readerRows(mix, pm, i => i === 8 ? 1 : 0), {}); ok(rm.rows[7].boxes.length === 1 && iou(rm.rows[7].boxes[0], trueBox(rm, mix.truth.signs[0])) > 0.55, 'sign below text'); }
 
+// ---- the Instruction cell is found from the right edge, not from a fixed column count (rule 10) ----
+// Instruction is the second-to-last column: the table's right edge, then Instruction's right rule, then its left rule. A column rule
+// the photo lost or drew too faintly, or a table with another number of columns left of Instruction, must not cost the page its signs.
+{ const base = { ...pageOpts, map: false, streak: 0 };
+  const run = (name, o, want) => {
+    const pg = drawPage({ ...base, ...o }), ph = photograph(pg, {}), res = analyze(ph.img, readerRows(pg, ph, i => TAG_ROWS.includes(i) ? 1 : 0), {});
+    if (want) checkSigns(pg, res, name); else ok(res.rows.every(r => r.boxes.length === 0), `${name}: no sign boxes`);
+    return res;
+  };
+  const vx7 = [60, 130, 200, 270, 360, 700, 940];                    // six columns: the shape of a real table
+  const full = run('7 rules', { vx: vx7 }, true);
+  for (const i of [1, 2, 3]) {                                       // a rule left of Instruction lost: 6 rules found
+    const lost = run(`rule ${i} missing`, { vx: vx7, dropCol: i }, true);
+    full.rows.forEach((r, k) => ok(lost.rows[k].boxes.length === r.boxes.length, `rule ${i} missing: row ${k + 1} has as many graphics as the full page`));
+  }
+  run('rule 2 too faint', { vx: vx7, faintCol: 2 }, true);
+  run('5 rules', { vx: [60, 200, 360, 700, 940] }, true);
+  run('5 rules, other widths', { vx: [100, 280, 360, 700, 940] }, true);
+  run('4 rules', { vx: [240, 360, 700, 940] }, true);
+  run('9 rules', { vx: [60, 100, 140, 190, 240, 300, 360, 700, 940] }, true);
+  run('2 rules', { vx: [360, 700] }, false);                         // fewer than 3 column rules: no sign boxes, no error
+  run('1 rule', { vx: [360] }, false); }
+
 console.log(`vision tests: ${checks} checks passed`);

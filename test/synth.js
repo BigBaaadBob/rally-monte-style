@@ -14,13 +14,15 @@ function drawPage(o = {}) {
   const seg = (x0, y0, x1, y1, t, v) => { const n = Math.ceil(Math.hypot(x1 - x0, y1 - y0)); for (let i = 0; i <= n; i++) rect(Math.round(x0 + (x1 - x0) * i / n - t / 2), Math.round(y0 + (y1 - y0) * i / n - t / 2), t, t, v); };
   const T = 3;                                                      // rule thickness
   const vx = o.vx || [60, 110, 170, 240, 300, 360, 700, 940];       // 8 column rules: Instruction is 360-700
+  const ic = vx.length - 3;                                          // Instruction is the second-to-last column: its left rule is third from the right
   const top = o.top || 220;
   let heights = o.heights || [50, 90, 300, 60, 160, 75, 170, 30, 200, 100, 120];   // headings, then rows (about 10:1)
   if (o.decoy) heights = [o.decoy, ...heights];                     // a band above the headings that the column rules also cross
   const rules = [top]; for (const hh of heights) rules.push(rules[rules.length - 1] + hh);
   const bottom = rules[rules.length - 1];
   rules.forEach((r, i) => { if (i !== o.dropRule) rect(vx[0], r, vx[vx.length - 1] - vx[0] + T, T, 0); });   // dropRule: a rule the photo lost
-  for (const x of vx) rect(x, top, T, bottom - top + T, 0);
+  // dropCol: a column rule (index into vx) the photo lost; faintCol: one drawn too faint to be found as a rule (grey level faint)
+  vx.forEach((x, i) => { if (i !== o.dropCol) rect(x, top, T, bottom - top + T, i === o.faintCol ? (o.faint || 215) : 0); });
   // letters in every cell; the Instruction cell gets 1-3 lines of text (text height 14)
   const letters = (x0, y0, wmax, v) => { let x = x0; while (x + 7 < x0 + wmax) { rect(x, y0, 7, 14, v); x += 11 + (rnd() < 0.15 ? 8 : 0); } };
   const truth = { rows: [], signs: [] };
@@ -28,15 +30,15 @@ function drawPage(o = {}) {
     const y0 = rules[k] + T, y1 = rules[k + 1];
     truth.rows.push({ top: y0, bottom: y1 });
     for (let c = 0; c < vx.length - 1; c++) {
-      if (c === 5) continue;
+      if (c === ic) continue;
       letters(vx[c] + 10, y0 + 12, Math.min(60, vx[c + 1] - vx[c] - 20), 0);
     }
     const ri = truth.rows.length, lines = o.lines ? o.lines[ri - 1] : 1 + (k % 3);
-    for (let l = 0; l < lines && y0 + 12 + l * 26 + 14 < y1 - 6; l++) letters(vx[5] + 12, y0 + 12 + l * 26, (vx[6] - vx[5]) * (0.5 + 0.4 * rnd()), 0);
+    for (let l = 0; l < lines && y0 + 12 + l * 26 + 14 < y1 - 6; l++) letters(vx[ic] + 12, y0 + 12 + l * 26, (vx[ic + 1] - vx[ic]) * (0.5 + 0.4 * rnd()), 0);
   }
   // signs: {row (1-based), kind, dx, dy}: placed in the Instruction cell below the text
   for (const s of o.signs || []) {
-    const r = truth.rows[s.row - 1], x = vx[5] + 20 + (s.dx || 0), y = Math.min(r.top + 12 + (s.dy == null ? 40 : s.dy), r.bottom - 8 - 90);
+    const r = truth.rows[s.row - 1], x = vx[ic] + 20 + (s.dx || 0), y = Math.min(r.top + 12 + (s.dy == null ? 40 : s.dy), r.bottom - 8 - 90);
     let bb;
     if (s.kind === 'diamond') {                                     // a diamond with a plaque touching it
       const cx = x + 40, cy = y + 30;

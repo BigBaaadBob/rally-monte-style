@@ -108,12 +108,23 @@
   // pageOk(id) says whether a page copy is stored (null/undefined: not known yet). Returns one array of flag texts per row.
   // The page flag (RI a–b: check page images) runs from the first to the last row read from a page whose headings were moved,
   // rows with no band included.
+  // Tagged rows that got no sign image (DESIGN § Flags). Groups of row indexes, one per page copy: a group is two or more rows with a band and
+  // [sign: …] tags, none of which has a sign image. Worked out from the rows each time, never stored. Rows with no band are not counted.
+  function noSignGroups(rows) {
+    const byPage = new Map();
+    rows.forEach((x, i) => { if (x.band && /\[sign:/i.test(String(x.instr == null ? '' : x.instr))) { if (!byPage.has(x.band.page)) byPage.set(x.band.page, []); byPage.get(x.band.page).push(i); } });
+    return [...byPage.values()].filter(g => g.length >= 2 && g.every(i => !(rows[i].signs && rows[i].signs.length)));
+  }
+  // The indexes of the rows that highlight for that flag, in order.
+  const noSignRows = rows => noSignGroups(rows).flat().sort((a, b) => a - b);
+
   function imageFlags(rows, pageOk) {
     const pageOf = x => x.band ? x.band.page : x.imgCheck || null;
+    const noSign = new Map(noSignGroups(rows).map(g => [g[0], `RI ${rows[g[0]].ri}–${rows[g[g.length - 1]].ri}: no sign images found`]));
     const moved = new Set(rows.filter(x => x.band && x.band.pageCheck).map(x => x.band.page));
     const inRange = (x, p) => pageOf(x) === p && (x.band ? !!x.band.pageCheck : true);
     const seen = new Set();
-    return rows.map(x => {
+    return rows.map((x, i) => {
       const f = [], p = pageOf(x);
       if (x.band && pageOk && pageOk(x.band.page) === false) f.push(`RI ${x.ri}: page image missing`);
       else if (x.band ? x.band.check && !x.band.pageCheck : x.imgCheck && !moved.has(x.imgCheck)) f.push(`RI ${x.ri}: check page image`);
@@ -122,6 +133,7 @@
         const mine = rows.filter(y => inRange(y, p));
         f.push(`RI ${mine.length > 1 ? mine[0].ri + '–' + mine[mine.length - 1].ri : mine[0].ri}: check page images`);
       }
+      if (noSign.has(i)) f.push(noSign.get(i));
       return f;
     });
   }
@@ -355,6 +367,6 @@
 
   const Core = { parseTOD, fmtTOD, parseTA, fmtTA, TA_MAX, cmpRI, sameRI, normRow, mergeRows, compute, activeIndex, legOf,
     setTA, renameRI, completeActive, CLOSE_MI, closeMi, fmtOCF, uncomplete, lastCompleted, toCSV, parseCSV, parseOCR, parseRotation,
-    normBand, normSigns, pagesUsed, signParts, imageFlags };
+    normBand, normSigns, pagesUsed, signParts, imageFlags, noSignRows };
   if (typeof module !== 'undefined' && module.exports) module.exports = Core; else root.Core = Core;
 })(typeof window !== 'undefined' ? window : globalThis);

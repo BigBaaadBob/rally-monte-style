@@ -7,7 +7,8 @@ Run from the repo root after a build:
   Linux/WSL:  .venv/bin/python build.py && .venv/bin/python test/e2e/images.py
 Exits 1 if any check fails or an unexpected page error is captured."""
 from _common import APP_URL, OUT_DIR, LAYOUTS, launch_browser, check, capture_errors, run
-import asyncio, base64, json, re
+import asyncio, base64, io, json, re
+from PIL import Image, ImageChops, ImageStat
 from playwright.async_api import async_playwright
 
 # A ruled page (logical 1000 x 1650, drawn at 2x so the page copy is smaller than the original): a heading band, then rows of very
@@ -29,7 +30,7 @@ DRAW = """(turn) => {
     letters(vx[5] + 12, y0 + 12, 150);
   }
   const diamond = (x, y) => { const cx = x + 40, cy = y + 30; c.lineWidth = 4; c.beginPath(); c.moveTo(cx, cy - 30); c.lineTo(cx + 30, cy); c.lineTo(cx, cy + 30); c.lineTo(cx - 30, cy); c.closePath(); c.stroke();
-    c.fillRect(cx - 25, cy + 32, 50, 22); c.fillStyle = '#fff'; for (let i = 0; i < 4; i++) c.fillRect(cx - 20 + i * 11, cy + 36, 7, 14); c.fillStyle = '#000'; return [cx - 32, cy - 32, cx + 32, cy + 54]; };
+    c.beginPath(); c.moveTo(cx - 18, cy - 10); c.lineTo(cx + 2, cy - 10); c.lineTo(cx - 18, cy + 8); c.closePath(); c.fill(); c.fillRect(cx - 30, cy + 32, 34, 22); c.fillStyle = '#fff'; for (let i = 0; i < 3; i++) c.fillRect(cx - 26 + i * 11, cy + 36, 7, 14); c.fillStyle = '#000'; return [cx - 32, cy - 32, cx + 32, cy + 54]; };
   const rect = (x, y) => { c.lineWidth = 3; c.strokeRect(x, y, 90, 56); letters(x + 10, y + 12, 70); letters(x + 10, y + 32, 50); return [x, y, x + 90, y + 56]; };
   const photo = (x, y) => { for (let j = 0; j < 64; j += 2) for (let i = 0; i < 96; i += 2) { const v = 30 + Math.floor(rnd() * 190); c.fillStyle = `rgb(${v},${v},${v})`; c.fillRect(x + i, y + j, 2, 2); } c.fillStyle = '#000'; return [x, y, x + 96, y + 64]; };
   const cell = n => ({ x: vx[5] + 20, y: rules[n] + T + 40 });
@@ -46,6 +47,27 @@ DRAW = """(turn) => {
   const centre = n => (rules[n] + T + hs[n] / 2) / PH;                     // vertical centre of row n as a fraction of the upright page
   return { b64: out.toDataURL('image/jpeg', 0.92).split(',')[1], PW, PH, K, T, rules, hs, vx, boxes, ys: [1, 2, 3, 4, 5, 6, 7, 8].map(centre) };
 }"""
+
+# The orientation fixtures (below): the upright page is drawn larger than the page-copy limit, and Pillow writes every file.
+ORIENT_INV = {1: None, 2: Image.Transpose.FLIP_LEFT_RIGHT, 3: Image.Transpose.ROTATE_180, 4: Image.Transpose.FLIP_TOP_BOTTOM,
+              5: Image.Transpose.TRANSPOSE, 6: Image.Transpose.ROTATE_90, 7: Image.Transpose.TRANSVERSE, 8: Image.Transpose.ROTATE_270}
+CROP_LIMIT = 12.0     # mean absolute grey-level difference of two sign crops at 64 x 64: the limit for "the same crop" (see the check on its margin)
+
+
+def jpeg_with_tag(im, tag):
+    """Every fixture goes through this one JPEG encoding; tag is the EXIF orientation written (the pixels are already stored as given)."""
+    ex = Image.Exif(); ex[0x0112] = tag
+    out = io.BytesIO(); im.save(out, 'JPEG', quality=90, exif=ex)
+    return out.getvalue()
+
+
+def thumb(b64):
+    return Image.open(io.BytesIO(base64.b64decode(b64))).convert('L').resize((64, 64), Image.BILINEAR)
+
+
+def diff64(a, b):
+    return ImageStat.Stat(ImageChops.difference(a, b)).mean[0]
+
 
 IDB_SIZES = """() => new Promise(res => { const q = indexedDB.open('rallyMonteStyle.pages');
   q.onupgradeneeded = () => q.result.createObjectStore('pages');
@@ -321,6 +343,73 @@ async def main():
         api['rotation'] = 0
 
         # (rotation 90 or 270, when the pre-pass missed, is covered by the unit tests: it cannot be made to happen here)
+
+        # ---- orientation: nine fixtures through the photo picker (DESIGN § Testing) ----
+        # o1..o8 carry EXIF orientation 1..8 with the pixels stored by the inverse transform; o6_raw is o6's sideways pixels saved with tag 1.
+        # All come from one upright page larger than the page-copy limit, written by Pillow through one JPEG encoding. The tests never apply
+        # EXIF themselves: the browser's decode must give the same bands and sign images as o1.
+        big = await pg.evaluate(DRAW.replace('K = 2,', 'K = 2.4,').replace("toDataURL('image/jpeg', 0.92)", "toDataURL('image/png')"), 0)
+        upright = Image.open(io.BytesIO(base64.b64decode(big['b64']))).convert('RGB')
+        check(upright.size[0] >= 2400 and upright.size[1] >= 3960 and max(upright.size) > 2000, f'the orientation page is above the page-copy limit ({upright.size})')
+        fixtures = {f'o{n}': jpeg_with_tag(upright if t is None else upright.transpose(t), n) for n, t in ORIENT_INV.items()}
+        fixtures['o6_raw'] = jpeg_with_tag(upright.transpose(ORIENT_INV[6]), 1)
+        api['rotation'] = 0; api['rows'] = rows(ys)
+        GRAB = r"""async () => { const db = await new Promise(r => { const q = indexedDB.open('rallyMonteStyle.pages'); q.onsuccess = () => r(q.result); });
+          const get = id => new Promise(r => { const q = db.transaction('pages').objectStore('pages').get(id); q.onsuccess = () => r(q.result); });
+          const b64 = bl => new Promise(r => { const fr = new FileReader(); fr.onload = () => r(String(fr.result).split(',')[1]); fr.readAsDataURL(bl); });
+          const out = []; for (const x of R().rows) { const s = []; for (const id of x.signs || []) s.push(await b64(await get(id)));
+            out.push({ tags: (x.instr.match(/\[sign:/g) || []).length, band: x.band ? [x.band.top, x.band.bottom, x.band.left, x.band.right] : null, signs: s }); }
+          return { rows: out, flags: document.querySelector('.flags') ? document.querySelector('.flags').textContent : '' }; }"""
+        got = {}
+        await pg.click('#tabs button[data-v=route]')
+        for name, data in fixtures.items():
+            await read(data=data)
+            await until("R().rows.filter(x => x.band).length > 0", f'{name}: the rows have bands')
+            got[name] = await pg.evaluate(GRAB)
+            await pg.click('#btnClearRI'); await pg.click('#mOk'); await asyncio.sleep(0.4)
+        ref = got['o1']
+        tagged_banded = [i for i, r in enumerate(ref['rows']) if r['tags'] and r['band']]
+        check(len(tagged_banded) >= 3 and sum(len(r['signs']) for r in ref['rows']) >= 4, 'the reference o1 has tagged rows with bands and sign images')
+        noise = 0.0
+        for name, g in got.items():
+            if name == 'o1':
+                continue
+            check(len(g['rows']) == len(ref['rows']) and all((a['band'] is None) == (b['band'] is None) for a, b in zip(g['rows'], ref['rows'])), f'{name}: the same rows have bands as o1')
+            check(all(a['band'] is None or max(abs(u - v) for u, v in zip(a['band'], b['band'])) < 0.004 for a, b in zip(g['rows'], ref['rows'])), f'{name}: the same bands as o1')
+            check([len(r['signs']) for r in g['rows']] == [len(r['signs']) for r in ref['rows']], f'{name}: the same sign count per row as o1')
+            ds = [diff64(thumb(ca), thumb(cr)) for ra, rb in zip(g['rows'], ref['rows']) for ca, cr in zip(ra['signs'], rb['signs'])]
+            noise = max([noise] + ds)
+            check(len(ds) >= 4 and max(ds) <= CROP_LIMIT, f'{name}: every sign crop matches o1 (largest difference {max(ds, default=-1):.1f} of {CROP_LIMIT})')
+        check('no sign images found' not in ref['flags'], 'a normal read lists no "no sign images found" flag')
+        # the measure must tell a wrong crop from a right one: o1's crops against mirrored and quarter-turned copies of themselves
+        errs = []
+        for r in ref['rows']:
+            for cb in r['signs']:
+                im = Image.open(io.BytesIO(base64.b64decode(cb))).convert('L')
+                for t in (Image.Transpose.FLIP_LEFT_RIGHT, Image.Transpose.FLIP_TOP_BOTTOM, Image.Transpose.ROTATE_90):
+                    errs.append(diff64(im.resize((64, 64), Image.BILINEAR), im.transpose(t).resize((64, 64), Image.BILINEAR)))
+        print(f'info: crop noise ceiling {noise:.1f}, limit {CROP_LIMIT}, smallest error difference {min(errs):.1f}')
+        check(len(errs) >= 12 and min(errs) >= 2 * CROP_LIMIT, f'the crop measure tells a mirrored or turned crop from a right one (smallest error {min(errs):.1f}, limit {CROP_LIMIT})')
+        api['rows'] = rows(ys)
+
+        # ---- the page flag for tagged rows that got no sign image ----
+        await read()
+        await until("R().rows.filter(x => x.band).length > 0", 'rows for the no-sign-images flag check')
+        await pg.evaluate("() => { R().rows.forEach(x => { x.signs = []; }); save(R()); }")
+        await pg.reload(); await pg.wait_for_selector('#tabs'); await pg.click('#tabs button[data-v=route]')
+        want = await pg.evaluate(r"""() => { const t = R().rows.filter(x => x.band && /\[sign:/.test(x.instr)); return { a: String(t[0].ri), b: String(t[t.length - 1].ri), ris: t.map(x => String(x.ri)), n: t.length }; }""")
+        await until("document.querySelector('.flags') && /no sign images found/.test(document.querySelector('.flags').textContent)", 'tagged rows with no sign images are flagged')
+        ftxt = await pg.inner_text('.flags')
+        check(want['n'] >= 2 and len(re.findall('no sign images found', ftxt)) == 1 and f"RI {want['a']}–{want['b']}: no sign images found" in ftxt, f"the flag is listed once, from the first to the last tagged row ({want['a']}–{want['b']})")
+        lit = await pg.evaluate(r"""() => [...document.querySelectorAll('#rtEdit tr')].map(tr => ({ ri: (tr.querySelector('input[data-k=ri]') || {}).value, flag: tr.classList.contains('flag') }))""")
+        by = {x['ri']: x['flag'] for x in lit if x['ri'] is not None}
+        check(all(by.get(ri) for ri in want['ris']), 'every tagged row highlights')
+        plain = await pg.evaluate(r"""() => R().rows.filter(x => x.band && !x.band.check && !x.band.pageCheck && !/\[sign:/.test(x.instr)).map(x => String(x.ri))""")
+        check(len(plain) >= 1 and not any(by.get(ri) for ri in plain), 'banded rows with no tags do not highlight')
+        await pg.evaluate(r"() => { R().rows.forEach(x => { x.instr = x.instr.replace(/\[sign:[^\]]*\]/g, 'x'); }); save(R()); }")
+        await pg.reload(); await pg.wait_for_selector('#tabs'); await pg.click('#tabs button[data-v=route]')
+        check('no sign images found' not in (await pg.inner_text('.flags') if await pg.query_selector('.flags') else ''), 'editing the tags out clears the flag')
+        await pg.click('#btnClearRI'); await pg.click('#mOk'); await asyncio.sleep(0.4)
 
         # ---- failure: the copy cannot be saved ----
         await pg.evaluate("window.__failPut = true")
