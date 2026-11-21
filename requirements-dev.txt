@@ -1,2 +1,3 @@
 # Test dependencies. Install into the project .venv (see CLAUDE.md).
 playwright==1.65.2
+Pillow==13.0.0

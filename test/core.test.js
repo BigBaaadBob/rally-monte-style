@@ -385,6 +385,28 @@ assert.strictEqual(Core.parseOCR('no JSON here at all').length, 0, 'prose with n
   // a missing page copy is reported once per band row; unknown (still loading) is not
   assert.deepStrictEqual(Core.imageFlags([rows[4]], id => id !== 'pgB')[0], ['RI 52: page image missing']);
   assert.deepStrictEqual(Core.imageFlags([rows[4]], null)[0], ['RI 52: check page image']); }
+// no sign images found (DESIGN § Flags): two or more rows with [sign: …] tags on one page copy, and none of them got a sign image.
+// Derived whenever the flags are listed, never stored; the flag sits on the first of those rows and every one of them highlights.
+{ const bd = page => ({ page, top: 0.1, bottom: 0.2, left: 0.1, right: 0.9, src: 'rules' });
+  const mk = (ri, page, tags, signs) => Core.normRow({ ri, om: '1', instr: 'Go' + ' [sign: x]'.repeat(tags), band: page ? bd(page) : undefined, signs: signs || [] });
+  const flat = rows => Core.imageFlags(rows, () => true).flat().filter(f => /no sign images found/.test(f));
+  const rows = [mk(10, 'pgA', 0), mk(11, 'pgA', 1), mk(12, 'pgA', 0), mk(13, 'pgA', 2), mk(14, 'pgA', 1)];
+  assert.deepStrictEqual(flat(rows), ['RI 11–14: no sign images found'], 'three tagged rows, none with an image: one flag from the first to the last');
+  assert.deepStrictEqual(Core.imageFlags(rows, () => true).map(f => f.length), [0, 1, 0, 0, 0], 'listed once, on the first tagged row');
+  assert.deepStrictEqual(Core.noSignRows(rows), [1, 3, 4], 'only the tagged rows highlight');
+  assert.deepStrictEqual(flat(rows.slice(0, 2)), [], 'one tagged row with no image gets no flag');
+  assert.deepStrictEqual(Core.noSignRows(rows.slice(0, 2)), [], '... and does not highlight');
+  assert.deepStrictEqual(flat([mk(11, 'pgA', 1), mk(13, 'pgA', 2, ['s1']), mk(14, 'pgA', 1)]), [], 'a page with one sign image found gets none');
+  assert.deepStrictEqual(Core.noSignRows([mk(11, 'pgA', 1), mk(13, 'pgA', 2, ['s1']), mk(14, 'pgA', 1)]), []);
+  assert.deepStrictEqual(flat([mk(11, null, 1), mk(13, null, 2), mk(14, 'pgA', 1)]), [], 'rows with no band are not counted');
+  assert.deepStrictEqual(flat([mk(11, null, 1), mk(13, 'pgA', 2), mk(14, 'pgA', 1)]), ['RI 13–14: no sign images found'], '... and do not count towards the range either');
+  assert.deepStrictEqual(flat([mk(1, 'pgA', 1), mk(2, 'pgA', 1), mk(3, 'pgB', 1), mk(4, 'pgB', 1, ['s'])]), ['RI 1–2: no sign images found'], 'pages are judged on their own');
+  assert.deepStrictEqual(flat([mk(1, 'pgA', 1), mk(2, 'pgA', 1), mk(3, 'pgB', 1), mk(4, 'pgB', 1)]).length, 2, 'two pages, two flags');
+  const edited = rows.map(x => ({ ...x, instr: x.instr.replace(/ \[sign: x\]/g, '') }));
+  assert.deepStrictEqual(flat(edited), [], 'editing the tags out clears it');
+  assert.deepStrictEqual(flat([...rows.slice(0, 3), { ...rows[3], instr: 'Go' }, { ...rows[4], instr: 'Go' }]), [], 'one tagged row left: no flag');
+  assert.deepStrictEqual(flat([rows[1], { ...rows[3], signs: ['s2'] }, rows[4]]), [], 'a Re-read that finds an image clears it');
+  assert.ok(!('noSign' in rows[1]) && !Object.keys(rows[1]).some(k => /nosign/i.test(k)), 'nothing is stored on the row'); }
 // the reader's page-level rotation (DESIGN § Reading pages): clockwise degrees to upright; missing or invalid means 0
 assert.strictEqual(Core.parseRotation('{"rotation": 180, "rows": []}'), 180);
 assert.strictEqual(Core.parseRotation('```json' + String.fromCharCode(10) + '{"rotation":90,"rows":[{"ri":1}]}' + String.fromCharCode(10) + '```'), 90);
