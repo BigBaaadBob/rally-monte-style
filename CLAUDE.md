@@ -63,12 +63,25 @@ Method:
 - Recorded replies are valid only for the OCR prompt and sent image they were recorded with. Any change to either (for example #69's prompt change) means re-recording before the next evaluation.
 - Also run a mock-tag run (3 tags per row). Mock replies carry each page's recorded rotation; a mock with rotation 0 on an upside-down photo once produced a false 0/5.
 - Score sign images against the private ground truth (graphics per row position, counts only) as hits and false positives.
-- Per page, report column and row rules found, bands by `src`, the flags, and sign hits and false positives.
+- Per page, report the column and row rule counts (see Rule counts below), bands by `src`, the flags, and sign hits and false positives.
 - Time each page in desktop Chromium, unthrottled and at 4× CPU throttle, and measure peak memory per page.
 - Convert tablet HEIC photos to upright JPEGs first, as Safari does.
 - "Before" is `main`, rebuilt and measured in the same session on the same machine, never stored numbers from an earlier run. This file states how to measure, not limits; limits come from each brief.
 
-Stop on worse (default): if any page is worse than the baseline, or a limit set by the brief is hit, Claude Code stops and reports by page number for the owner's decision. It does not weigh trade-offs on its own. Claude Code never changes a threshold unless the brief says to. Worse means fewer hits, more false positives, or changed bands or flags than the baseline, or more column rules than the table has.
+Rule counts:
+
+- Reported counts are the column and row rule counts after `gridOf` (the rules kept as the table's grid), given separately for pass 1 and pass 2, each labelled.
+- Pass 1 is the rules found on the page as photographed (after the orientation turns), which set the table frame. The sideways pre-pass (`needsTurn`) is separate and is not pass 1. Pass 2 is the rules found again in the perspective-corrected table (DESIGN.md § Page images, finding the table). When pass 2 does not run (too few rules for a frame, or no correction), it is reported as "not run", never as 0.
+- The table's count comes only from the private ground truth for each page, never from any build's output, and never from `gridOf`. The column rule count is columns + 1. The row rule count comes from the page as drawn: every ruled line that spans the table within its outer column rules, which is rows + 2 (the rule above the headings, the rule below them, and one below each row) plus each further ruled line of a box above the headings or below the table (a box edge that is already one of those rules is not counted twice). The private ground truth records the count per page. This file gives the definition only, with no counts, page numbers, or other values from the set.
+- Matching counts do not show that the table frame is unchanged. A frame comparison, where a brief needs one, is separate.
+- When a page's ground truth is unconfirmed, its counts are reported, but "above the table's count" cannot stop the work there; Claude Code reports it as unconfirmed instead. "Further below `main`" and "pass 2 not run" still apply, since they compare two builds.
+- Raw `rulesOf` counts (the candidate rules) are optional. When a change touches rule finding itself (threshold, line test, or stroke joining), they are required for both passes, labelled raw. Raw counts are never used to judge better or worse.
+
+Stop on worse (default): if any page is worse than the baseline, or a limit set by the brief is hit, Claude Code stops and reports by page number for the owner's decision. It does not weigh trade-offs on its own. Claude Code never changes a threshold unless the brief says to. Worse means fewer hits, more false positives, or changed bands or flags than the baseline, or a worse rule count. A rule count is worse, for columns or rows, in either pass, when:
+
+- it is above the table's count;
+- it is further below the table's count than `main`'s count from the same session (a count that is below the table's count on `main` and no further below after the change is reported, not worse);
+- pass 2 is "not run" on a page where `main` ran it.
 
 Unconfirmed failures: a failure seen only through a mock or a harness is a hypothesis. Report it as unconfirmed until it is checked on recorded real replies, and build no issue on it before then.
 
