@@ -27,6 +27,7 @@
     COPY_MAX: 2000,       // page copy: longest side in pixels
     FALLBACK: 0.04,       // rule 8: half-height of the fallback band (fraction of the page height)
     PAGE_MIN_ROWS: 2,     // rule 7: rows that must agree before the headings offset is overridden
+    SOUND_MAJORITY: 1 / 2,   // rule 9: a page is sound when more than this fraction of its rows with a usable y have y inside their own row's band
     CELL_MX: 6, CELL_MY: 7,       // rule 10: pixels kept clear of the cell's rules (at 1,500 px page width)
     JOIN_W: 5, JOIN_H: 1,         // rule 12: ink joins sideways (radius) but not between lines
     TALL: 1.8, WIDE: 1.2, // rule 12: a graphic is taller / wider than this many text heights
@@ -373,6 +374,19 @@
       for (let hd = -(ys.length - 2); hd <= ys.length - 2; hd++) { const s = score(hd); if (s > bs) { bs = s; best = hd; } }   // below zero: rows above the first rule found
       if (best !== head && bs >= K.PAGE_MIN_ROWS) { head = best; pageCheck = true; }
     }
+    // rule 9: a page is sound when (a) the cross-check did not move the headings, (b) more than K.SOUND_MAJORITY of the rows with a usable y
+    // (valid, inside the page copy) have that y inside their own row's band (a y in no band disagrees; rows with no usable y are left out),
+    // and (c) every row has a row that names a band (a rule missing low leaves the last row's row naming no band). On a sound page a row whose y
+    // falls in another band keeps its row band, flagged; on a page in doubt y decides.
+    let sound = false;
+    if (useRules && !pageCheck) {
+      const edges = ys.map((v, k) => v + hth[k] / 2), tops = ys.map((v, k) => v - hth[k] / 2);
+      const rowBandOf = it => it.okRow && head + it.row >= 0 && head + it.row <= ys.length - 2 ? head + it.row : -1;
+      const inCopy = it => { const v = conv ? (it.y * h * conv.sy + conv.ty) / image.h : it.y; return v >= 0 && v <= 1; };
+      const usable = items.filter(it => it.okY && inCopy(it));
+      const agree = usable.filter(it => { const rb = rowBandOf(it); return rb >= 0 && bandAt(edges, tops, it.y * h) === rb; }).length;
+      sound = usable.length > 0 && agree / usable.length > K.SOUND_MAJORITY && items.every(it => rowBandOf(it) >= 0);
+    }
     // rule 8: rows whose y fall in the same band are all flagged (a missing rule merges two rows into one band; the first row's row and y still agree)
     const yb = items.map(it => { if (!useRules || !it.okY) return -1; const b = bandAt(ys.map((v, k) => v + hth[k] / 2), ys.map((v, k) => v - hth[k] / 2), it.y * h); return b > head ? b : -1; });
     const shared = yb.map(b => b >= 0 && yb.filter(x => x === b).length >= 2);
@@ -391,7 +405,10 @@
         const rowBand = it.okRow && head + it.row >= 0 && head + it.row <= ys.length - 2 ? head + it.row : -1;
         let yBand = it.okY ? bandAt(edges, tops, it.y * h) : -1;
         if (yBand <= head) yBand = -1;                                 // headings and above are not rows
-        if (yBand >= 0) { mk(edges[yBand], tops[yBand + 1], it.okRow && rowBand >= 0 && rowBand !== yBand ? 'y' : 'rules', it.okRow && rowBand !== yBand, yBand); return o; }
+        if (yBand >= 0) {
+          const differs = it.okRow && rowBand >= 0 && rowBand !== yBand, k = differs && sound ? rowBand : yBand;   // rule 9: a sound page keeps the row band
+          mk(edges[k], tops[k + 1], differs && !sound ? 'y' : 'rules', it.okRow && rowBand !== yBand, k); return o;
+        }
         if (rowBand >= 0) { mk(edges[rowBand], tops[rowBand + 1], rowOnly ? 'row' : it.okY ? 'rules' : 'row', rowOnly || it.okY, rowBand); return o; }
       }
       if (it.okY) { const m = K.FALLBACK * h; mk(it.y * h - m, it.y * h + m, 'fallback', true, -1); }   // may reach past the analysed window; the copy's edge clips it below
