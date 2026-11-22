@@ -116,10 +116,51 @@ for (const [name, o] of Object.entries(variants)) {
   ok(res.rows[4].band.check === true && res.rows[4].band.src === 'rules', 'y in no band: flagged, src rules');
   near(res.rows[4].band.top, res.cf(0, page.truth.rows[4].top).y, 0.004, 'y in no band: the row decides');
   ok(!res.pageCheck && res.rows.filter((r, i) => i !== 4 && r.band.check).length === 0, 'one stray y does not flag the page');
-  // y says another band: y wins, src y, flagged
-  rows = base.map((r, i) => i === 3 ? { ...r, row: 7 } : r); res = analyze(ph.img, rows, {});
-  ok(res.rows[3].band.src === 'y' && res.rows[3].band.check === true, 'y overrides row: src y, flagged');
-  near(res.rows[3].band.top, res.cf(0, page.truth.rows[3].top).y, 0.004, 'y overrides row: y decides');
+  // y says another band (rule 9). A row's y is moved one row down the page by giving it the next row's y.
+  const N = base.length, topOf = (r, i) => r.cf(0, page.truth.rows[i].top).y, botOf = (r, i) => r.cf(0, page.truth.rows[i].bottom).y;
+  const off = (rs, idx) => rs.map((r, i) => idx.includes(i) ? { ...r, y: base[i + 1].y } : r);
+  // n rows off in both directions (the first half one row down, the rest one row up), so no single headings offset fits them and the cross-check stays put
+  const dirOf = (i, n) => i < Math.ceil(n / 2) ? 1 : -1, mix = (rs, n) => rs.map((r, i) => i < n ? { ...r, y: base[i + dirOf(i, n)].y } : r);
+  // a page in doubt, a majority of its rows disagree: y decides, src y, flagged
+  res = analyze(ph.img, mix(base, 6), {});
+  ok(!res.pageCheck, 'majority off: the headings are not moved');
+  for (let i = 0; i < 6; i++) { ok(res.rows[i].band.src === 'y' && res.rows[i].band.check === true, `majority off: row ${i + 1} src y, flagged`); near(res.rows[i].band.top, topOf(res, i + dirOf(i, 6)), 0.004, `majority off: row ${i + 1} y decides`); }
+  // a page in doubt, a row that names no band (below the table): y decides for the row whose y is off
+  rows = off(base, [3]).map((r, i) => i === 8 ? { ...r, row: 40 } : r); res = analyze(ph.img, rows, {});
+  ok(res.rows[3].band.src === 'y' && res.rows[3].band.check === true, 'a row names no band: the page is in doubt, src y, flagged');
+  near(res.rows[3].band.top, topOf(res, 4), 0.004, 'a row names no band: y decides');
+  // a sound page, one row's y a row off: the row band is kept, src rules, flagged; rows far from it are not flagged
+  res = analyze(ph.img, off(base, [3]), {});
+  ok(!res.pageCheck && res.rows[3].band.src === 'rules' && res.rows[3].band.check === true, 'sound page, one row off: src rules, flagged');
+  near(res.rows[3].band.top, topOf(res, 3), 0.004, 'sound page, one row off: row decides'); near(res.rows[3].band.bottom, botOf(res, 3), 0.004, 'sound page, one row off: row decides (bottom)');
+  ok(res.rows.every((r, i) => [3, 4].includes(i) || (!r.band.check && r.band.src === 'rules')), 'sound page, one row off: no other row is flagged except by the shared band');
+  // a sound page, an adjacent block of rows off
+  res = analyze(ph.img, off(base, [2, 3]), {});
+  for (const i of [2, 3]) { ok(res.rows[i].band.src === 'rules' && res.rows[i].band.check === true, `sound page, block off: row ${i + 1} src rules, flagged`); near(res.rows[i].band.top, topOf(res, i), 0.004, `sound page, block off: row ${i + 1} row decides`); }
+  // the majority: just under half off, row wins; exactly half and just over half, y wins (the first 9 or 8 rows are given)
+  for (const [m, n, wins] of [[9, 4, 'row'], [8, 4, 'y'], [9, 5, 'y']]) {
+    res = analyze(ph.img, mix(base, n).slice(0, m), {}); ok(!res.pageCheck, `${n} of ${m} off: the headings are not moved`);
+    for (let i = 0; i < n; i++) { ok(res.rows[i].band.src === (wins === 'y' ? 'y' : 'rules') && res.rows[i].band.check === true, `${n} of ${m} off: row ${i + 1} src ${wins === 'y' ? 'y' : 'rules'}, flagged`); near(res.rows[i].band.top, topOf(res, wins === 'y' ? i + dirOf(i, n) : i), 0.004, `${n} of ${m} off: ${wins} decides row ${i + 1}`); }
+  }
+  // the S26 pattern: the two top rows' y one row too low. Both keep their row bands and are flagged; the third row shares a band with the second's y, so it stays flagged
+  res = analyze(ph.img, off(base, [0, 1]), {});
+  for (const i of [0, 1]) { ok(res.rows[i].band.src === 'rules' && res.rows[i].band.check === true, `S26 pattern: row ${i + 1} keeps its row band, flagged`); near(res.rows[i].band.top, topOf(res, i), 0.004, `S26 pattern: row ${i + 1} row decides`); }
+  ok(res.rows[2].band.check === true && res.rows[2].band.src === 'rules', 'S26 pattern: the third row is flagged by the same-band rule'); near(res.rows[2].band.top, topOf(res, 2), 0.004, 'S26 pattern: the third row keeps its band');
+  ok(res.rows.slice(3).every(r => !r.band.check), 'S26 pattern: the other rows are not flagged');
+  // a continuation fragment at the top (row 1, not returned): the page is still sound and a row off keeps its row band
+  res = analyze(ph.img, off(base, [3]).slice(1), {});
+  ok(res.rows[2].band.src === 'rules' && res.rows[2].band.check === true, 'continuation at the top: a row off on a sound page keeps its row band'); near(res.rows[2].band.top, topOf(res, 3), 0.004, 'continuation at the top: row decides');
+  // a row rule missing low: two rows merge, every row below names the band one too low and the last names none, so y wins below the merge
+  for (const [j, name] of [[N - 3, 'lower half'], [1, 'upper half']]) {
+    const lost = drawPage({ ...pageOpts, signs: [], map: false, streak: 0, dropRule: j + 2 }), lph = photograph(lost, { slant: 1 }), all = readerRows(lost, lph, () => 0), lres = analyze(lph.img, all, {});
+    const lt = (i, k) => lres.cf(0, lost.truth.rows[i][k]).y;
+    ok(lres.pageCheck === (j === 1), `rule missing in the ${name}: ${j === 1 ? 'most rows lie below the merge, so the cross-check moves the headings (a page in doubt)' : 'the headings are not moved'}`);
+    ok(lres.rows[j].band.check === true && lres.rows[j + 1].band.check === true, `rule missing in the ${name}: the merged rows are flagged`);
+    near(lres.rows[j + 1].band.top, lt(j, 'top'), 0.004, `rule missing in the ${name}: the second merged row is in the merged band`); near(lres.rows[j + 1].band.bottom, lt(j + 1, 'bottom'), 0.004, `rule missing in the ${name}: the merged band's bottom`);
+    if (j === 1) ok(lres.rows.every(r => r.band && r.band.check === true && r.band.pageCheck === true), `rule missing in the ${name}: every row of the page gets check and pageCheck`);
+    if (j !== 1) ok(lres.rows[j + 1].band.src === 'y', `rule missing in the ${name}: y decides below the merge`);
+    for (let i = j + 2; i < N; i++) near(lres.rows[i].band.top, lt(i, 'top'), 0.004, `rule missing in the ${name}: row ${i + 1} y decides`);
+  }
   // no y: row alone, not flagged
   rows = base.map(r => ({ row: r.row, tags: r.tags })); res = analyze(ph.img, rows, {});
   ok(res.rows.every(r => r.band.src === 'row' && !r.band.check), 'no y: src row, no flag'); checkBands(page, res, 'row only', true);
