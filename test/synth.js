@@ -22,7 +22,9 @@ function drawPage(o = {}) {
   const bottom = rules[rules.length - 1];
   rules.forEach((r, i) => { if (i !== o.dropRule) rect(vx[0], r, vx[vx.length - 1] - vx[0] + T, T, 0); });   // dropRule: a rule the photo lost
   // dropCol: a column rule (index into vx) the photo lost; faintCol: one drawn too faint to be found as a rule (grey level faint)
-  vx.forEach((x, i) => { if (i !== o.dropCol) rect(x, top, T, bottom - top + T, i === o.faintCol ? (o.faint || 215) : 0); });
+  // colExt: {column index: [y0, y1]}, a column rule drawn over these page rows instead of the table's height (reaching into a box above, or short of the table)
+  vx.forEach((x, i) => { if (i !== o.dropCol) { const e = (o.colExt && o.colExt[i]) || [top, bottom + T]; rect(x, e[0], T, e[1] - e[0], i === o.faintCol ? (o.faint || 215) : 0); } });
+  if (o.wideBox) box(vx[0], o.wideBox[0], vx[vx.length - 1] - vx[0] + T, o.wideBox[1] - o.wideBox[0] + T, T, 0);   // a ruled box as wide as the table, over page rows [y0, y1]
   // letters in every cell; the Instruction cell gets 1-3 lines of text (text height 14)
   const letters = (x0, y0, wmax, v) => { let x = x0; while (x + 7 < x0 + wmax) { rect(x, y0, 7, 14, v); x += 11 + (rnd() < 0.15 ? 8 : 0); } };
   const truth = { rows: [], signs: [] };
