@@ -16,12 +16,13 @@
     V_MIN: 0.15,          // shortest column rule candidate (fraction of the height)
     SIDE: 25, SIDE_D: 0.003, SIDE_OK: 0.5,   // rule 5: a rule is this much darker than the paper on both sides, at this distance
     CONTRAST: 0.5,        // rule 5: a column rule's contrast with its paper is at least this share of the typical column rule's
-    EXTENT: 0.03,         // rule 5: column rules must span the table height (fraction of the height of slack)
+    LIMIT_SNAP: 0.5,      // rule 5: a body limit snaps to the nearest row rule within this many median row pitches
+    COL_SHORT: 0.5,       // rule 5: a column rule may fall short of a body limit by this many row pitches
     ROW_SPAN: 0.8,        // rule 5: a row rule spans at least this much of the table width
-    ROW_SLACK: 0.01,      // rule 5: a row rule lies within the column rules' extent (fraction of the height of slack)
-    ROW_IN: 0.6,          // rule 5: ... meeting at least this share of the column rules inside their extent
-    MERGE: 0.005,         // rule 5: rules closer than this fraction of the page height are merged
-    HEAD_COLS: 2,         // rule 6: the headings band is crossed by this many interior column rules
+    ROW_SLACK: 0.01,      // rule 5: a column rule's end may fall short of the row rule it ends on by this fraction of the page height (only to tell which rules cross)
+    PIECE_GAP: 0.5,       // rule 5: pieces of a column rule that overlap or gap by at most this many row pitches may be one rule
+    INSTR_GAP: 0.5,       // rule 5: a row rule may stop short of an Instruction-cell rule by this many median column widths
+    MERGE: 0.005,         // rule 5: rules closer than this fraction of the page height are merged; also the slack at the body's edges
     MARGIN_X: 0.03, MARGIN_Y: 0.02,   // the window the rules are found in: margin kept around the table (fraction of the table size)
     SHEET_X: 0.5, SHEET_Y: 0.6,       // page copy: most of the sheet kept beside / above and below the table (fraction of the table size)
     COPY_MAX: 2000,       // page copy: longest side in pixels
@@ -205,9 +206,12 @@
   }
 
   // ---------- the table ----------
-  function dedupe(cs, pos, minD) {                       // keep the first of rules closer than minD
+  function dedupe(cs, pos, minD, longer) {              // keep the first of rules closer than minD (the longer one when longer is set)
     const s = cs.map(c => ({ c, p: pos(c) })).sort((a, b) => a.p - b.p), out = [];
-    for (const x of s) if (!out.length || x.p - out[out.length - 1].p >= minD) out.push(x);
+    for (const x of s) {
+      if (!out.length || x.p - out[out.length - 1].p >= minD) out.push(x);
+      else if (longer && x.c.t1 - x.c.t0 > out[out.length - 1].c.t1 - out[out.length - 1].c.t0) out[out.length - 1] = x;
+    }
     return out.map(x => x.c);
   }
   function cross(hc, vc, y0) {                           // where a row rule (y over x) meets a column rule (x over y)
@@ -215,31 +219,141 @@
     for (let i = 0; i < 8; i++) { y = ev(hc, x); x = ev(vc, y); }
     return [x, y];
   }
-  // Rules 5-6 and the table frame. Returns {ok, V, H, head, xc, quad} (ok: a frame; head: headings band index or null).
+  // Rules 5-6 and the table frame (DESIGN § Reading pages → Page images → Finding the table). Returns
+  // {ok, V, H, Hout, head, xc, ym, tw, quad, diag}. ok: a frame; head: the headings band index (0 when ok, the body's first band);
+  // Hout: row-rule candidates outside the body (the lines of a box above or below); diag: what the harness reports (reruns, limits, margins).
+  // Order: (1) long verticals, provisional outer rules; (2) horizontals that span the table and cross two interior verticals; (3) first pitch;
+  // (4) the body's limits, voted by the interior verticals' ends; (5) column test; (6) row test against the final columns; (7) a side with no
+  // limit takes the outermost row rule that passes the row test; (8) final pitch. Steps 5-6 run at most twice: the second run happens once, when
+  // the outer rules changed (from step 2) or, otherwise, always once more with the final pitch (and a fallback limit in place of a provisional one).
   function gridOf(R) {
-    const { w, h } = R, res = { ok: false, V: [], H: [], head: null, xc: w / 2, quad: null };
+    const { w, h } = R, res = { ok: false, V: [], H: [], Hout: [], head: null, xc: w / 2, quad: null, diag: null };
     let V = R.V;
     if (V.length < 3) return res;
     const med = median(V.map(v => v.con));
     V = V.filter(v => v.con >= K.CONTRAST * med);                        // rule 5: about as dark as the others (against its own paper)
-    const vt = median(V.map(v => v.t0)), vb = median(V.map(v => v.t1)), tol = K.EXTENT * h;
-    V = V.filter(v => v.t0 <= vt + tol && v.t1 >= vb - tol);             // rule 5: runs the full table height
-    V = dedupe(V, v => ev(v, (vt + vb) / 2), K.MERGE * h);
-    if (V.length < 3) return res;
-    const ym = (vt + vb) / 2, xl = ev(V[0], ym), xr = ev(V[V.length - 1], ym), tw = xr - xl, xc = (xl + xr) / 2;
-    const slack = K.ROW_SLACK * h;
-    const within = (c, v) => { const y = cross(c, v, ev(c, xc))[1]; return y >= v.t0 - slack && y <= v.t1 + slack; };
-    // rule 5: a row rule lies within the column rules' extent (where it meets most of them, so a tilted page is no problem)
-    let H = R.H.filter(c => (c.t1 - c.t0) >= K.ROW_SPAN * tw && V.filter(v => within(c, v)).length >= K.ROW_IN * V.length);
-    H = dedupe(H, c => ev(c, xc), K.MERGE * h);
-    Object.assign(res, { V, H, xc, ym, tw });
-    if (H.length < 2) return res;
-    const inner = V.slice(1, -1);
-    for (let i = 0; i < H.length - 1 && res.head == null; i++) {         // rule 6: the headings band
-      const mid = (ev(H[i], xc) + ev(H[i + 1], xc)) / 2;
-      if (inner.filter(v => v.t0 <= mid && mid <= v.t1).length >= K.HEAD_COLS) res.head = i;
+    const ym0 = median(V.map(v => (v.t0 + v.t1) / 2));
+    if (dedupe(V, v => ev(v, ym0), K.MERGE * h, true).length < 3) return res;
+    const mergeD = K.MERGE * h, slack = K.ROW_SLACK * h;
+    const gapsOf = ys => { const g = []; for (let i = 1; i < ys.length; i++) g.push(ys[i] - ys[i - 1]); return median(g); };
+    // Pieces of one column rule that the trace left apart (a break, or an overlap longer than joinStrokes joins) are one rule when: they
+    // overlap or gap by at most K.PIECE_GAP row pitches, their fitted lines agree within the merge distance over that stretch, their union
+    // covers the body (the provisional limits topC and botC, as in the column test), and the combined rule passes the line and contrast tests.
+    const mergePieces = (vs, pitch, topC, botC, yAt) => {
+      vs = vs.slice();
+      const covers = c => c.t0 <= yAt(topC, c) + K.COL_SHORT * pitch && c.t1 >= yAt(botC, c) - K.COL_SHORT * pitch;
+      for (let again = true; again;) {
+        again = false;
+        search: for (const A of vs) for (const B of vs) {
+          if (A === B || !(A.t0 < B.t0 && B.t1 > A.t1) || Math.abs(B.t0 - A.t1) > K.PIECE_GAP * pitch) continue;
+          const lo = Math.min(A.t1, B.t0), hi = Math.max(A.t1, B.t0);
+          if (![lo, (lo + hi) / 2, hi].every(t => Math.abs(ev(A, t) - ev(B, t)) <= mergeD)) continue;
+          const T = [], U = [], cut = (lo + hi) / 2;
+          for (let t = Math.ceil(A.t0); t <= B.t1; t++) { T.push(t); U.push(ev(t <= cut ? A : B, t)); }
+          const c = fitCurve({ T, U, th: (A.th + B.th) / 2 });
+          if (!covers(c) || !lineTest(R.g, w, h, c, false) || c.con < K.CONTRAST * med) continue;
+          vs = vs.filter(x => x !== A && x !== B).concat([c]); again = true; break search;
+        }
+      }
+      return dedupe(vs, v => ev(v, ym0), mergeD, true);
+    };
+    // One pass over steps 2-8 for the candidate verticals Vraw. fixed: {pitch, top, bot} to skip steps 2-4 (a rerun with the limits as found).
+    // last: no further rerun, so the outer rules are taken as they are.
+    const attempt = (Vraw, fixed, last) => {
+      const Vc = dedupe(Vraw, v => ev(v, ym0), mergeD, true);
+      if (Vc.length < 3) return { V: Vc, H: [], fail: true, notSnapped: [], votes: {} };
+      let VV = Vc;                                                       // the candidates after pieces are combined
+      const n = Vc.length, xl = ev(Vc[0], ym0), xr = ev(Vc[n - 1], ym0), tw = (xr - xl), xc = (xl + xr) / 2, inner = Vc.slice(1, -1);
+      const s = { Vc, V: Vc, H: [], pitchUsed: 0, pitch1: NaN, notSnapped: [], votes: {} };
+      let pitch, top, bot, topSn, botSn;
+      if (fixed) { pitch = fixed.pitch; top = fixed.top; bot = fixed.bot; topSn = botSn = true; s.notSnapped = fixed.notSnapped; }
+      else {
+        const yAt = (c, v) => cross(c, v, ev(c, xc))[1], need = Math.min(2, inner.length);
+        const W = dedupe(R.H.filter(c => c.t1 - c.t0 >= K.ROW_SPAN * tw), c => ev(c, xc), mergeD);       // every rule that spans the table: the candidates the verticals' ends vote among
+        if (W.length < 2) { s.H = W; s.fail = true; return s; }
+        const Q0 = W.filter(c => inner.filter(v => { const y = yAt(c, v); return y >= v.t0 - slack && y <= v.t1 + slack; }).length >= need), Q = Q0.length >= 2 ? Q0 : W;
+        pitch = s.pitch1 = gapsOf(Q.map(c => ev(c, xc)));
+        VV = mergePieces(Vraw, pitch, Q[0], Q[Q.length - 1], yAt);
+        const inr = VV.slice(1, -1);
+        // a limit is the outermost row rule that a majority of the interior column rules cover: a rule covers a row rule when it is present at
+        // its height, or when that row rule is the nearest candidate to the column rule's end, within LIMIT_SNAP pitches (so a box line near the
+        // headings' top rule is not covered by column rules that end at the headings). A plurality never sets a limit, and a few rules reaching
+        // into a box cannot select the box's line. next: the most covered of the rules passed over (outside the one chosen).
+        const nearest = (v, at) => { let best = null, bd = Infinity; for (const c of W) { const d = Math.abs(yAt(c, v) - at); if (d < bd) { bd = d; best = c; } } return bd <= K.LIMIT_SNAP * pitch ? best : null; };
+        const nearTop = new Map(inr.map(v => [v, nearest(v, v.t0)])), nearBot = new Map(inr.map(v => [v, nearest(v, v.t1)]));
+        const vote = isTop => {
+          const order = isTop ? W : W.slice().reverse(); let next = 0;
+          for (const c of order) {
+            let k = 0;
+            for (const v of inr) { const y = yAt(c, v); if ((y >= v.t0 && y <= v.t1) || (isTop ? nearTop : nearBot).get(v) === c) k++; }
+            if (2 * k > inr.length) return { c, votes: k, next, of: inr.length };
+            next = Math.max(next, k);
+          }
+          return null;
+        };
+        const t = vote(true), b = vote(false);
+        top = t ? t.c : Q[0]; bot = b ? b.c : Q[Q.length - 1]; topSn = !!t; botSn = !!b;
+        s.votes = { top: t && { votes: t.votes, next: t.next, of: t.of }, bottom: b && { votes: b.votes, next: b.next, of: b.of } };
+        if (!t) s.notSnapped.push('top'); if (!b) s.notSnapped.push('bottom');
+      }
+      s.pitchUsed = pitch;
+      const yAt = (c, v) => cross(c, v, ev(c, xc))[1], sh = K.COL_SHORT * pitch;     // step 5: a column rule covers the body, anything above is ignored
+      const Vcol = VV.filter(v => v.t0 <= yAt(top, v) + sh && v.t1 >= yAt(bot, v) - sh);
+      s.V = Vcol;
+      if (Vcol.length < 3) { s.fail = true; return s; }
+      if (!last && (Vcol[0] !== VV[0] || Vcol[Vcol.length - 1] !== VV[VV.length - 1])) { s.outerChanged = true; return s; }
+      // step 6: row rules against the final columns
+      const m = Vcol.length, xl2 = ev(Vcol[0], ym0), xr2 = ev(Vcol[m - 1], ym0), tw2 = xr2 - xl2, xc2 = (xl2 + xr2) / 2;
+      const yc = c => ev(c, xc2), yAt2 = (c, v) => cross(c, v, yc(c))[1];
+      const cw = median(Vcol.slice(1).map((v, i) => ev(v, ym0) - ev(Vcol[i], ym0))), g = K.INSTR_GAP * cw;
+      const iv = [Vcol[m - 3], Vcol[m - 2]];                              // the Instruction cell: second-to-last and third-to-last rules from the right
+      const gapTo = (c, v) => { const x = cross(c, v, yc(c))[0]; return c.t0 > x ? c.t0 - x : c.t1 < x ? x - c.t1 : 0; };
+      const rowOk = c => c.t1 - c.t0 >= K.ROW_SPAN * tw2 && iv.every(v => gapTo(c, v) <= g);
+      const yTop = yc(top), yBot = yc(bot), innerC = Vcol.slice(1, -1), needC = Math.min(2, innerC.length);
+      const crosses = c => innerC.filter(v => { const y = yAt2(c, v); return y >= v.t0 - slack && y <= v.t1 + slack; }).length >= needC;
+      // a side with a snapped limit is bounded by it; a side without one takes the outermost rule that passes the row test and still meets the interior column rules
+      const cand = R.H.filter(c => {
+        if (!rowOk(c)) return false;
+        const y = yc(c);
+        if ((topSn && y < yTop - mergeD) || (botSn && y > yBot + mergeD)) return false;
+        return (y >= yTop - mergeD && y <= yBot + mergeD) || crosses(c);
+      });
+      if (topSn && !cand.includes(top)) cand.push(top);
+      if (botSn && !cand.includes(bot)) cand.push(bot);
+      const Hs = dedupe(cand, yc, mergeD);
+      s.xc = xc2; s.tw = tw2; s.H = Hs;
+      if (Hs.length < 2) { s.fail = true; return s; }
+      s.topFell = !topSn && Hs[0] !== top; s.botFell = !botSn && Hs[Hs.length - 1] !== bot;     // step 7
+      s.top = Hs[0]; s.bot = Hs[Hs.length - 1]; s.pitch = gapsOf(Hs.map(yc));                  // step 8
+      const hcon = median(Hs.map(c => c.con)), lo = Math.min(xl2, xr2), hi = Math.max(xl2, xr2);   // outside the body: spans 80% of tw between the outer rules, and as dark as the body's rules
+      const reach1 = (v, y) => y >= v.t0 - K.LIMIT_SNAP * s.pitch && y <= v.t1 + K.LIMIT_SNAP * s.pitch;     // both outer rules, as traced before clipping, reach the line
+      s.Hout = R.H.filter(c => { if (Hs.includes(c)) return false; const y = yc(c); if (!(y < yc(s.top) - mergeD || y > yc(s.bot) + mergeD)) return false; if (!reach1(Vcol[0], y) || !reach1(Vcol[m - 1], y)) return false; return Math.min(c.t1, hi) - Math.max(c.t0, lo) >= K.ROW_SPAN * tw2 && c.con >= K.CONTRAST * hcon; });
+      const need = needC, reach = (c, v) => { const y = yAt2(c, v); return Math.max(0, v.t0 - y, y - v.t1); };
+      s.margins = {
+        cols: Vcol.map(v => ({ short: [Math.max(0, v.t0 - yAt2(s.top, v)) / s.pitch, Math.max(0, yAt2(s.bot, v) - v.t1) / s.pitch] })),
+        rows: Hs.map(c => ({ width: (c.t1 - c.t0) / tw2 - K.ROW_SPAN, gaps: iv.map(v => gapTo(c, v) / cw),
+          cross: need ? (slack - innerC.map(v => reach(c, v)).sort((a, b) => a - b)[need - 1]) / slack : null })),   // ROW_SLACK's margin: > 0 passes with room
+        out: s.Hout.map(c => ({ y: yc(c), width: (Math.min(c.t1, hi) - Math.max(c.t0, lo)) / tw2 })),
+      };
+      return s;
+    };
+    const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+    const reruns = [];
+    let s = attempt(V, null, false);
+    if (s.outerChanged) {                                                // the outer rules and tw of step 1 were provisional: start again from step 2
+      const prev = s.V; s = attempt(prev, null, true); reruns.push({ trigger: ['outer rules'], changed: true });
+    } else if (!s.fail) {                                                // always once more, with the final pitch (and the fallback limits, if any)
+      const trigger = ['final pitch'];
+      if (s.topFell || s.botFell) trigger.push('fallback limit');
+      const prev = s, ns = attempt(prev.V, { pitch: prev.pitch, top: prev.top, bot: prev.bot, notSnapped: prev.notSnapped }, true);
+      reruns.push({ trigger, changed: !!ns.fail || !same(prev.V, ns.V) || !same(prev.H, ns.H) });
+      s = Object.assign(ns, { votes: prev.votes, pitch1: prev.pitch1 });
     }
-    const top = H[0], bot = H[H.length - 1], l = V[0], r = V[V.length - 1], y0 = ev(top, xc), y1 = ev(bot, xc);
+    res.V = s.V; res.H = s.H;
+    res.diag = { pitch1: s.pitch1, pitch: s.pitch, notSnapped: s.notSnapped, votes: s.votes, reruns, margins: s.margins || null };
+    if (s.fail) return res;
+    Object.assign(res, { xc: s.xc, ym: ym0, tw: s.tw, Hout: s.Hout || [], head: 0 });
+    const top = s.top, bot = s.bot, l = s.V[0], r = s.V[s.V.length - 1], y0 = ev(top, res.xc), y1 = ev(bot, res.xc);
     res.quad = [cross(top, l, y0), cross(top, r, y0), cross(bot, r, y1), cross(bot, l, y1)];
     res.ok = true;
     return res;

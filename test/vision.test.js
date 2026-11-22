@@ -263,4 +263,104 @@ for (const [name, o] of Object.entries(variants)) {
   run('2 rules', { vx: [360, 700] }, false);                         // fewer than 3 column rules: no sign boxes, no error
   run('1 rule', { vx: [360] }, false); }
 
+// ---- the table frame (rules 5-6): gridOf on rules built from the geometry drawn, so every number below is a line drawn, never an output ----
+// A column rule is {x, from y to y}; a row rule is {y, from x to x}. Row pitch (median of the gaps between the body's rules) is 100; half is 50.
+{ const mk = (u, t0, t1) => ({ c0: u, c1: 0, c2: 0, t0, t1, tc: (t0 + t1) / 2, hh: (t1 - t0) / 2, th: 3, con: 100, dark: 0 });
+  const VX = [60, 110, 170, 240, 300, 360, 700, 940], YS = [220, 270, 360, 660, 720, 880, 955, 1125, 1155, 1355, 1455, 1575], TW = 880;
+  const build = (o = {}) => {
+    const vx = o.vx || VX, ext = o.ext || {};
+    const V = vx.map((x, i) => { const e = ext[i] || [220, 1575]; return mk(x, e[0], e[1]); }).filter((_, i) => !(o.skip || []).includes(i)).concat(o.extraV || []);
+    const H = (o.ys || YS).map(y => mk(y, 60, 940)).concat(o.extraH || []);
+    const g = new Uint8Array(1000 * 1800).fill(255);                    // the paper, with the slanted rule drawn dark (only the combined rule is tested against it)
+    for (const r of o.ink || []) for (let y = r.t0; y <= r.t1; y++) { const x = Math.round(r.x0 + r.slope * (y - r.t0)); for (let d = -1; d <= 1; d++) g[y * 1000 + x + d] = 0; }
+    return { w: 1000, h: 1800, V, H, g };
+  };
+  const frame = (G, name, y0, y1, x0 = 60, x1 = 940) => {
+    ok(G.ok, name + ': a frame'); ok(G.head === 0, name + ': the headings are the first band');
+    [[x0, y0], [x1, y0], [x1, y1], [x0, y1]].forEach((p, i) => { near(G.quad[i][0], p[0], 1, name + ': corner ' + i + ' x'); near(G.quad[i][1], p[1], 1, name + ': corner ' + i + ' y'); });
+  };
+  const base = Vision.gridOf(build());
+  frame(base, 'plain table', 220, 1575); ok(base.V.length === 8 && base.H.length === YS.length, 'plain table: every column and row rule kept');
+  ok(base.diag.notSnapped.length === 0 && base.diag.reruns.length === 1 && base.diag.reruns[0].trigger.join() === 'final pitch' && !base.diag.reruns[0].changed, 'plain table: both limits snap; the one second run (final pitch) changes nothing');
+  // column rules of mixed heights, some reaching up into a ruled box as wide as the table: all kept, the frame starts at the headings
+  { const G = Vision.gridOf(build({ extraH: [mk(100, 60, 940), mk(190, 60, 940)], ext: { 0: [100, 1575], 7: [100, 1575], 2: [100, 1575], 4: [100, 1575], 3: [190, 1575] } }));
+    frame(G, 'mixed column heights', 220, 1575); ok(G.V.length === 8, 'mixed column heights: all eight column rules kept');
+    ok(G.H.length === YS.length && G.Hout.length === 2, 'mixed column heights: the box lines are not rows (' + G.H.length + ' rows, ' + G.Hout.length + ' outside)'); }
+  // a column rule covers the body, falling short by at most half a row pitch at each end
+  { const G = Vision.gridOf(build({ ext: { 3: [260, 1535] } })); ok(G.V.length === 8, 'short by 40 (under half a pitch) at both ends: kept');
+    const S = Vision.gridOf(build({ ext: { 4: [300, 1575] } })); ok(S.V.length === 7 && !S.V.some(v => v.c0 === 300), 'short by 80 at the top: not a column rule');
+    const B = Vision.gridOf(build({ ext: { 4: [220, 1495] } })); ok(B.V.length === 7 && !B.V.some(v => v.c0 === 300), 'short by 80 at the bottom: not a column rule'); }
+  // a box line 30 px above the headings' top rule and one 30 px below the last row's rule (both under half a pitch, 50), column rules ending at the table's rules:
+  // the column rules end nearest the table's rules, so the lines are not covered, and the limits are the headings' top rule and the last row's bottom rule
+  { const G = Vision.gridOf(build({ extraH: [mk(190, 60, 940), mk(1605, 60, 940)] }));
+    frame(G, 'box lines 30 px outside the table', 220, 1575); ok(G.V.length === 8 && G.H.length === YS.length, 'box lines 30 px outside the table: not rows');
+    ok(G.diag.votes.top.votes === 6 && G.diag.votes.bottom.votes === 6 && G.diag.notSnapped.length === 0, 'box lines 30 px outside the table: the limits are covered by all 6 interior rules'); }
+  // column rules that stop short of the table by up to half a row pitch are column rules, whatever the page height (a pitch of 200 here, so half is 100)
+  { const ys = [220, 420, 620, 820, 1020, 1220, 1420];
+    const G = Vision.gridOf(build({ ys, ext: { 1: [300, 1420], 4: [220, 1340] } })); frame(G, 'columns short by 80', 220, 1420); ok(G.V.length === 8, 'columns short by 80 of a 200 pitch (at the top, at the bottom): kept');
+    // ends a few pixels either side of the old fixed bar (3% of the page height, 54 px): the same columns either way
+    const J = Vision.gridOf(build({ ys, ext: { 3: [220, 1369], 5: [220, 1363] } })); frame(J, 'columns short by 51 and 57', 220, 1420); ok(J.V.length === 8, 'columns short by 51 and by 57: both kept'); }
+  // most of the column rules end a little short of the last row rule (45 of a 100 pitch): the bottom limit is still that rule
+  { const ext = {}; [1, 2, 3, 5, 6].forEach(i => { ext[i] = [220, 1530]; });
+    const G = Vision.gridOf(build({ ext })); frame(G, 'columns end short of the last rule', 220, 1575); ok(G.V.length === 8 && G.H.length === YS.length, 'columns end short of the last rule: every row rule kept'); }
+  // a row rule inside the body: exactly 80% of the table width is accepted, just under is not
+  { const x0 = 60; ok(Vision.gridOf(build({ extraH: [mk(500, x0, x0 + Vision.K.ROW_SPAN * TW)] })).H.length === YS.length + 1, 'a row rule spanning exactly 80% is a row rule');
+    ok(Vision.gridOf(build({ extraH: [mk(500, x0, x0 + Vision.K.ROW_SPAN * TW - 1)] })).H.length === YS.length, 'a row rule just under 80% is not'); }
+  // a row rule must reach both rules that bound the Instruction cell, with a gap of half a column width (median 60: 30) at each
+  { const vx = [60, 110, 170, 240, 300, 360, 900, 940];             // Instruction is 360-900
+    ok(Vision.gridOf(build({ vx, extraH: [mk(500, 60, 60 + 0.9 * TW)] })).H.length === YS.length, 'a 90% rule that stops 48 short of an Instruction rule is not a row rule');
+    ok(Vision.gridOf(build({ vx, extraH: [mk(500, 60, 872)] })).H.length === YS.length + 1, 'a rule that stops 28 short of it is'); }
+  // column ends jittered by a few pixels, top and bottom independently: the same columns and frame
+  { const jt = [3, -4, 2, -3, 4, -2, 1, -1], jb = [-2, 3, -4, 2, 1, -3, 4, -1], ext = {};
+    jt.forEach((d, i) => { ext[i] = [220 + d, 1575 + jb[i]]; });
+    const G = Vision.gridOf(build({ ext })); frame(G, 'jittered column ends', 220, 1575); ok(G.V.length === 8 && G.H.length === YS.length, 'jittered column ends: the same rules'); }
+  // a ruled box below the table, one interior column rule running on into it (a streak joined to it): the bottom limit stays at the last row's rule
+  { const G = Vision.gridOf(build({ extraH: [mk(1610, 60, 940), mk(1700, 60, 940)], ext: { 0: [220, 1700], 7: [220, 1700], 3: [220, 1700] } }));
+    frame(G, 'box below with a streak', 220, 1575); ok(G.H.length === YS.length && G.Hout.length === 2 && G.V.length === 8, 'box below with a streak: the box lines are not rows'); }
+  // a photo cut off through a row (rules 220-360 are full-width rows that pass the row test but do not meet the interior columns, so they are not the fallback limit): no rule where the columns begin (or end), so that limit is not snapped and the frame starts at the first rule found
+  { const G = Vision.gridOf(build({ ext: Object.fromEntries(VX.map((_, i) => [i, [515, 1575]])) }));
+    frame(G, 'cut off at the top', 660, 1575); ok(G.diag.notSnapped.length === 0 && G.diag.votes.top.votes === 6, 'cut off at the top: every interior rule covers the first rule found, so it is the limit (6 of 6)');
+    const E = Vision.gridOf(build({ ext: Object.fromEntries(VX.map((_, i) => [i, [220, 1040]])) }));
+    frame(E, 'cut off at the bottom', 220, 955); ok(E.diag.notSnapped.length === 0 && E.diag.votes.bottom.votes === 6, 'cut off at the bottom: every interior rule covers the last rule found (6 of 6)'); }
+  // no majority: three interior rules cover the upper rows and three the lower, so no rule is covered by more than half of the six. Nothing is snapped
+  // (a plurality never sets a limit), both limits are reported as not snapped, and the columns then fail the body test, so no frame
+  { const ext = {}; [1, 2, 3].forEach(i => { ext[i] = [220, 800]; }); [4, 5, 6].forEach(i => { ext[i] = [900, 1575]; });
+    const G = Vision.gridOf(build({ ext }));
+    ok(G.diag.notSnapped.join() === 'top,bottom' && G.diag.votes.top === null && G.diag.votes.bottom === null, 'no majority: both limits reported as not snapped');
+    ok(!G.ok && G.V.length === 2, 'no majority: the columns that cover only half of the body are not column rules (no frame, no error)'); }
+  // a plurality is not a majority: of five interior rules, one reaches exactly to the box's top line (100) and one to its other line (150): the headings' top rule is covered by all five
+  { const vx = [60, 130, 200, 270, 360, 700, 940];
+    const G = Vision.gridOf(build({ vx, extraH: [mk(100, 60, 940), mk(150, 60, 940)], ext: { 1: [100, 1575], 2: [150, 1575] } }));
+    frame(G, 'two of five reach the box', 220, 1575); ok(G.V.length === 7, 'two of five reach the box: all seven column rules kept');
+    ok(G.diag.votes.top.votes === 5 && G.diag.votes.top.next === 2 && G.diag.votes.top.of === 5, 'the box line is covered by 2 of 5 interior rules, the headings rule by all 5 (got ' + JSON.stringify(G.diag.votes.top) + ')');
+    ok(G.diag.votes.bottom.votes === 5 && G.diag.notSnapped.length === 0, 'the bottom limit snaps by 5 of 5'); }
+  // the outer rules of the first look are provisional: a long vertical beside the table that does not cover the body is dropped, with one second run from the start
+  { const G = Vision.gridOf(build({ extraV: [mk(20, 600, 1400)] }));
+    frame(G, 'a vertical beside the table', 220, 1575); ok(G.V.length === 8 && G.V[0].c0 === 60, 'a vertical beside the table: not a column rule');
+    ok(G.diag.reruns.length === 1 && G.diag.reruns[0].trigger.includes('outer rules'), 'a vertical beside the table: the second run is reported'); }
+  // a line outside the body counts only if it spans 80% of the table width between the outer rules and is as dark as the body's rules
+  { const G = Vision.gridOf(build({ extraH: [mk(100, 60, 940), mk(150, 60, 60 + Vision.K.ROW_SPAN * TW - 1), Object.assign(mk(1600, 60, 940), { con: 20 }), mk(1700, 0, 1000)], ext: { 0: [100, 1700], 7: [100, 1700] } }));
+    ok(G.Hout.length === 2, 'outside the body: a full line and one reaching past the outer rules count; one just under 80% and a faint one do not (got ' + G.Hout.length + ')'); }
+  // a full-width line near the image's bottom edge with no box: the outer column rules do not reach it, so it is not counted
+  { const G = Vision.gridOf(build({ extraH: [mk(1790, 60, 940)] })); frame(G, 'a line at the bottom edge', 220, 1575);
+    ok(G.Hout.length === 0 && G.H.length + G.Hout.length === YS.length, 'a line at the bottom edge with no box: not in Hout, the row count stays at the rules drawn'); }
+  // pieces of one slanted column rule, overlapping by more than joinStrokes joins (18 px of a 100 pitch: half a pitch is the limit): one column rule
+  { const sl = 0.04, piece = (t0, t1, x0) => { const tc = (t0 + t1) / 2, hh = (t1 - t0) / 2; return { c0: x0 + sl * (tc - t0), c1: sl * hh, c2: 0, t0, t1, tc, hh, th: 3, con: 100, dark: 0 }; };
+    const ink = [{ x0: 240, slope: sl, t0: 220, t1: 1575 }];
+    const G = Vision.gridOf(build({ skip: [3], ink, extraV: [piece(220, 898, 240), piece(880, 1575, 240 + sl * 660)] }));
+    frame(G, 'a rule in two pieces', 220, 1575); ok(G.V.length === 8, 'a slanted rule broken in two pieces that overlap by 18: one column rule (got ' + G.V.length + ')');
+    const far = Vision.gridOf(build({ skip: [3], ink, extraV: [piece(220, 898, 240), piece(880, 1575, 240 + sl * 660 + 15)] }));
+    ok(far.V.length === 7, 'two parallel pieces 15 apart (merge distance 9): not combined, neither covers the body');
+    const bent = Vision.gridOf(build({ skip: [3], ink, extraV: [piece(220, 850, 240), Object.assign(piece(880, 1575, 240 + sl * 660), { c1: 0.5 * 347.5 })] }));
+    ok(bent.V.length === 7, 'a piece and a streak segment that does not line up: not combined'); }
+  // too few rules: no frame, no error
+  ok(!Vision.gridOf(build({ ys: [220] })).ok, 'one row rule: no frame'); ok(!Vision.gridOf(build({ vx: [60, 940] })).ok, 'two column rules: no frame');
+  // on a drawn and photographed page: a ruled box as wide as the table above the headings, with some column rules running up into it
+  { const pg = drawPage({ wideBox: [40, 190], colExt: { 2: [40, 1578], 4: [40, 1578], 3: [190, 1578] }, lines: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1] });
+    for (const [name, o] of [['flat', {}], ['slant and keystone', { slant: 2, key: 0.06, blur: 1 }]]) {
+      const ph = photograph(pg, o), G = Vision.gridOf(Vision.rulesOf(ph.img)), res = analyze(ph.img, readerRows(pg, ph), {});
+      ok(G.ok && G.head === 0 && G.V.length === 8, 'box above, ' + name + ': a frame, headings first, eight column rules');
+      const tl = ph.to(60, 220), bl = ph.to(60, 1578); near(G.quad[0][1] - tl[1], 0, 6, 'box above, ' + name + ': the frame starts at the headings'); near(G.quad[3][1] - bl[1], 0, 6, 'box above, ' + name + ': and ends at the last row');
+      checkBands(pg, res, 'box above, ' + name); } } }
+
 console.log(`vision tests: ${checks} checks passed`);
