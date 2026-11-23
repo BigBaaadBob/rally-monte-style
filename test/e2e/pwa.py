@@ -66,11 +66,11 @@ async def main():
             # DESIGN § Hosting and install: sw.js caches the app's own files, so the installed app opens and reloads offline.
             check(await pg.evaluate('!!navigator.serviceWorker.controller'), 'the service worker controls the page')
             await pg.click('#btnNewSample')
-            # DESIGN § Tabs and settings (Data): the Delete rally text is as in DESIGN.
+            # DESIGN § Tabs and settings (Rallies): the Delete rally text is as in DESIGN.
             name = await pg.evaluate("R().name || 'Untitled rally'")
-            await pg.click('#tabs button[data-v=data]'); await pg.click('#bDel')
+            await pg.click('#tabs button[data-v=rallies]'); await pg.click(f'[data-rdel="{await pg.evaluate("R().id")}"]')
             body = await pg.inner_text('#mBody')
-            check(body == f'Delete “{name}” and all its data from this device? This cannot be undone. Export it first if you want a record.', f'Delete rally text on the API-key path ({body})')
+            check(body == f'Delete “{name}” and all its data from this device? This cannot be undone. Save it to a file first if you want to keep it.', f'Delete rally text on the API-key path ({body})')
             await pg.click('#mCancel')
             n_rallies = await pg.evaluate('Object.keys(store.rallies).length')
             await ctx.set_offline(True)
@@ -185,14 +185,30 @@ async def main():
             # Delete rally drops its photos; the remaining rally shows only its own.
             await pg.set_input_files('#fPages', [png('a-del.png')])
             a_url = await pg.evaluate('pagesOf(R().id)[0].url')
-            await pg.click('#tabs button[data-v=data]'); await pg.click('#bDel'); await modal(); await pg.click('#mOk')
+            await pg.click('#tabs button[data-v=rallies]'); await pg.click(f'[data-rdel="{await pg.evaluate("R().id")}"]'); await modal(); await pg.click('#mOk')
             check(await pg.evaluate('([a, u]) => !(a in pagesByRally) && __revoked.includes(u)', [A, a_url]), "Delete rally drops the rally's photos and frees their URLs")
             await open_route(B)
             check(await names() == ['b1.png'] and await thumbs() == 1, "the remaining rally shows only its own photo, none of A's")
+            # Replace (loading a rally file with the same id) while one of its reads is running: the rows are discarded, with no message; the photos stay.
+            b_rows = await pg.evaluate("store.rallies[%r].rows.length" % B)
+            await pg.click('#tabs button[data-v=rallies]')
+            async with pg.expect_download() as dl:
+                await pg.click(f'[data-save="{B}"]')
+            saved_b = OUT_DIR / 'pwa-b.rally'; await (await dl.value).save_as(saved_b)
+            await open_route(B)
+            hook['rows'] = tagged('b-replaced', 950); hook['delay'] = 1.0
+            await pg.click('[data-reread="0"]')
+            await pg.click('#tabs button[data-v=rallies]')
+            await pg.set_input_files('#fLoad', files=[{'name': 'b.rally', 'mimeType': 'application/octet-stream', 'buffer': saved_b.read_bytes()}])
+            await modal(); await pg.click('#mOk')
+            await pg.wait_for_function('readingBy.size === 0', timeout=10000); hook['delay'] = 0.0; hook['rows'] = None
+            check(not await modal_on() and await pg.evaluate("store.rallies[%r].rows.length" % B) == b_rows, 'replacing a rally during its read discards the rows with no message')
+            check(await pg.evaluate("pagesOf(%r).length" % B) == 1 and await pg.evaluate("pagesOf(%r)[0].state" % B) != 'busy', "Replace keeps the rally's page photos, and the discarded read leaves none of them reading")
+            await open_route(B)
             # Delete rally while one of its reads is running: the rows are discarded, with no message and no error.
             hook['rows'] = tagged('b-late', 900); hook['delay'] = 1.0
             await pg.click('[data-reread="0"]')
-            await pg.click('#tabs button[data-v=data]'); await pg.click('#bDel'); await modal(); await pg.click('#mOk')
+            await pg.click('#tabs button[data-v=rallies]'); await pg.click(f'[data-rdel="{await pg.evaluate("R().id")}"]'); await modal(); await pg.click('#mOk')
             await pg.wait_for_function('readingBy.size === 0', timeout=10000); hook['delay'] = 0.0; hook['rows'] = None
             check(not await modal_on() and B not in await pg.evaluate('Object.keys(store.rallies)'), 'deleting a rally during its read discards the rows with no message')
             # DESIGN § Hosting and install: a new version shows a banner and is applied only when the user taps Reload.

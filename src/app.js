@@ -40,10 +40,10 @@ function save(rally) {
   catch (e) { lsOK = false; }
   renderStorageWarn();
 }
+const STORAGE_MSG = 'This browser is not letting the page save on the device. Your data lasts only while the page stays open. Use Data → Export before closing.';
 function renderStorageWarn() {
   renderStorage();
-  $('storageWarn').innerHTML = lsOK ? '' :
-    '<div class="banner">This browser is not letting the page save on the device. Your data lasts only while the page stays open. Use Data → Export before closing.</div>';
+  $('storageWarn').innerHTML = lsOK ? '' : `<div class="banner">${STORAGE_MSG}</div>`;
 }
 
 function renderStorage() { $('storage').textContent = lsOK ? 'Saved on device' : 'Not saved!'; }
@@ -150,12 +150,15 @@ $('imgView').onclick = () => { $('imgView').classList.remove('on'); $('imgFull')
 
 // ---------------------------------------------------------------- UI helpers
 function toast(msg, ms = 2600) { const t = $('toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('on'), ms); }
-function confirmBox(title, bodyHtml, okLabel, onOk, cancelLabel = 'Cancel') {
+// alt: an optional middle button, {label, fn}.
+function confirmBox(title, bodyHtml, okLabel, onOk, cancelLabel = 'Cancel', alt = null) {
   $('mTitle').textContent = title; $('mBody').innerHTML = bodyHtml;
   $('mOk').textContent = okLabel; $('mCancel').textContent = cancelLabel; $('mCancel').style.display = cancelLabel ? '' : 'none';
+  $('mAlt').style.display = alt ? '' : 'none'; if (alt) $('mAlt').textContent = alt.label;
   $('modal').classList.add('on');
-  const close = () => { $('modal').classList.remove('on'); $('mOk').onclick = $('mCancel').onclick = null; };
+  const close = () => { $('modal').classList.remove('on'); $('mOk').onclick = $('mCancel').onclick = $('mAlt').onclick = null; };
   const gen = ++confirmBox.gen;
+  if (alt) $('mAlt').onclick = () => { alt.fn(); if (confirmBox.gen === gen) close(); };
   // onOk may return false to keep the dialog open, or open another dialog (which then stays open)
   $('mOk').onclick = () => { if (onOk && onOk() === false) return; if (confirmBox.gen === gen) close(); };
   $('mCancel').onclick = close;
@@ -226,11 +229,20 @@ function renderRallies() {
     return `<div class="card rally-item ${r.id === store.cur ? 'cur' : ''}">
       <div class="grow"><div class="name">${esc(r.name || 'Untitled rally')}</div>
       <div class="small muted">${esc(r.date || '')}${r.cn !== '' ? ' · Car ' + esc(r.cn) : ''} · ${r.rows.length} Route Instructions${r.rows.length ? ` · ${done} complete` : ''}</div></div>
-      <button data-open="${r.id}" class="primary">Open</button></div>`;
+      <div class="row rally-btns"><button data-open="${esc(r.id)}" class="primary">Open</button><button data-save="${esc(r.id)}">Save</button><button data-rdel="${esc(r.id)}" class="danger">Delete</button></div></div>`;
   }).join('') : '<p class="muted">No rallies yet. Start a new one, or try the invented sample rally.</p>';
   $('rallyList').querySelectorAll('[data-open]').forEach(b => b.onclick = () => {
     store.cur = b.dataset.open; save(); const r = R();
     show(r.rows.length && r.name ? 'run' : 'setup');
+  });
+  $('rallyList').querySelectorAll('[data-save]').forEach(b => b.onclick = () => saveRally(b.dataset.save));
+  $('rallyList').querySelectorAll('[data-rdel]').forEach(b => b.onclick = () => deleteRally(b.dataset.rdel));
+}
+// Delete (DESIGN § Tabs and settings): from the Rallies list; the open rally is closed only when it is the one deleted.
+function deleteRally(id) {
+  const r = store.rallies[id]; if (!r) return;
+  confirmBox('Delete rally', `Delete “${esc(r.name || 'Untitled rally')}” and all its data from this device? This cannot be undone. Save it to a file first if you want to keep it.`, 'Delete', () => {
+    delete store.rallies[id]; delete runPos[id]; dropPages(id); delete newByRally[id]; if (store.cur === id) store.cur = null; save(); gcPages(); show('rallies');
   });
 }
 $('btnNew').onclick = () => { const r = blankRally(); store.rallies[r.id] = r; store.cur = r.id; save(r); show('setup'); };
@@ -240,6 +252,76 @@ $('btnNewSample').onclick = () => {
   r.rows = Core.mergeRows([], SAMPLE.rows).rows;
   store.rallies[r.id] = r; store.cur = r.id; save(r); show('setup');
 };
+
+// ---------------------------------------------------------------- rally files (DESIGN § Storage; format: docs/RALLY-FILE.md)
+const rallyFileName = r => fileBase(r) + '.rally';
+// Save: the system share sheet where the device can share the file, else a download. Cancelling the share sheet does nothing.
+async function saveRally(id) {
+  const r = store.rallies[id]; if (!r) return;
+  const images = new Map();
+  for (const sid of new Set(r.rows.flatMap(x => x.signs || []))) {
+    try { const blob = await pageGet(sid); if (blob) images.set(sid, { bytes: new Uint8Array(await blob.arrayBuffer()), type: blob.type === 'image/png' ? 'image/png' : 'image/jpeg' }); } catch (e) {}
+  }
+  const bytes = RallyFile.encode(r, images, new Date().toISOString()), name = rallyFileName(r);
+  try {
+    const file = new File([bytes], name, { type: 'application/octet-stream' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file] }); return; }
+  } catch (e) { if (e && e.name === 'AbortError') return; }      // any other share failure falls back to the download
+  offerFile(name, bytes, 'application/octet-stream'); toast('Saved ' + name);
+}
+const rejectBox = msg => confirmBox('Rally file not loaded', esc(msg), 'OK', null, '');
+// A sign image as stored: kept as it is when it is at most 800 px on the long side, else scaled to 800 px and stored as JPEG 0.85.
+// Throws when the browser cannot decode it.
+async function signBlob(im) {
+  const blob = new Blob([im.bytes], { type: im.type }), bmp = await createImageBitmap(blob, { imageOrientation: 'from-image' });
+  try {
+    const m = Math.max(bmp.width, bmp.height);
+    if (m <= 800) return blob;
+    const k = 800 / m, cv = document.createElement('canvas'); cv.width = Math.max(1, Math.round(bmp.width * k)); cv.height = Math.max(1, Math.round(bmp.height * k));
+    cv.getContext('2d').drawImage(bmp, 0, 0, cv.width, cv.height);
+    const out = await new Promise(res => cv.toBlob(res, 'image/jpeg', 0.85));
+    if (!out) throw new Error('encode failed');
+    return out;
+  } finally { bmp.close(); }
+}
+async function loadRallyFile(f) {
+  if (!lsOK) { confirmBox('Rally file not loaded', esc(STORAGE_MSG), 'OK', null, ''); return; }
+  if (f.size > RallyFile.MAX_BYTES) { rejectBox('That file is over 50 MB, so it was not read.'); return; }
+  let d;
+  try { d = await RallyFile.decode(new Uint8Array(await f.arrayBuffer())); }
+  catch (e) { rejectBox(e instanceof RallyFile.RallyFileError ? e.message : 'That file could not be read.'); return; }
+  const same = d.rally.id && store.rallies[d.rally.id];
+  if (!same) return finishLoad(d, 'new');
+  confirmBox('Rally already loaded', `“${esc(same.name || 'Untitled rally')}” is already on this device. Replace it with the file, or keep both?`, 'Replace', () => { finishLoad(d, 'replace'); },
+    'Cancel', { label: 'Keep both', fn: () => { finishLoad(d, 'both'); } });
+}
+// Stores the images and adds the rally. Every new image id is pending until the rally is saved, so a load that fails part way
+// leaves nothing behind (DESIGN § Reading pages → Page images).
+async function finishLoad(d, mode) {
+  const ids = [], problems = d.problems.slice(), idOf = new Map();
+  try {
+    for (const [path, im] of d.images) {
+      const id = 'sg' + newId().slice(1); ids.push(id); pendingPages.add(id);
+      try { await pagePut(id, await signBlob(im)); idOf.set(path, id); } catch (e) { idOf.set(path, null); }
+    }
+    const rows = d.rows.map(x => ({ ...x, signs: x.signs.map(p => idOf.get(p)).filter(Boolean) }));
+    d.rows.forEach((x, i) => { for (let k = rows[i].signs.length; k < x.signs.length; k++) problems.push({ type: 'image', label: x.ri != null ? `RI ${x.ri}` : `row ${i + 1}` }); });
+    const t = now(), r = { ...blankRally(), ...d.rally, rows, taEvents: d.ta, created: t, updated: t };
+    r.crew = { driver: '', navigator: '', passengers: [], ...(d.rally.crew || {}) };
+    if (mode === 'replace') { loadGen.set(r.id, (loadGen.get(r.id) || 0) + 1); newOf(r.id).clear(); delete runPos[r.id]; }
+    else {
+      if (mode === 'both' || !d.rally.id) r.id = newId();
+      if (mode === 'both') { const base = r.name || 'Untitled rally', taken = n => Object.values(store.rallies).some(o => o.name === n); let k = 2; while (taken(`${base} (${k})`)) k++; r.name = `${base} (${k})`; }
+    }
+    store.rallies[r.id] = r; store.cur = r.id; save(r);
+    show(d.kind === 'saved' ? 'run' : 'setup');
+    if (problems.length) confirmBox('Rally file loaded', esc(RallyFile.noticeText(r.name, problems)), 'OK', null, '');
+    else toast(`Loaded “${r.name || 'Untitled rally'}”`);
+  } catch (e) {
+    rejectBox('That rally file could not be loaded.');
+  } finally { ids.forEach(id => pendingPages.delete(id)); gcPages(); }
+}
+$('fLoad').onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) loadRallyFile(f); };
 
 // ---------------------------------------------------------------- SETUP
 function renderSetup() {
@@ -294,11 +376,11 @@ function renderSetup() {
     if (v === undefined) { toast(msg); e.target.value = show(); return; }
     apply(v); e.target.value = show(); save(r); renderHeader();
   });
-  checked('fCN', v => { const s = v.trim(); return s === '' ? '' : /^\d{1,3}$/.test(s) ? +s : undefined; },
+  checked('fCN', Core.parseCN,
     'Car number must be a whole number from 0 to 999', v => { r.cn = v; }, () => String(r.cn ?? ''));
-  checked('fOCF', v => { const s = v.trim(); return s !== '' && Number.isFinite(+s) && +s > 0 ? +s : undefined; },
+  checked('fOCF', Core.parseOCF,
     'OCF must be a positive number.', v => { r.ocf = v; ocfHelp(); }, () => fmtOCF(r.ocf));
-  checked('fClose', v => { const s = v.trim(); return s === '' ? Core.CLOSE_MI : Number.isFinite(+s) && +s >= 0 && +s <= 5 ? +s : undefined; },
+  checked('fClose', Core.parseCloseMi,
     'Close RI limit must be between 0 and 5.0 miles', v => { r.closeMi = v; }, () => String(r.closeMi ?? Core.CLOSE_MI));
   $('fCls').onchange = e => { r.cls = e.target.value; save(r); renderHeader(); };
   bind('fDrv', v => c.driver = v);
@@ -317,6 +399,7 @@ function renderSetup() {
 const newByRally = {};          // rally id -> Set of RI numbers touched by the last import (highlighted)
 const pagesByRally = {};        // rally id -> [{file, url, state:'' | 'busy' | 'ok' | 'bad', msg}]
 const readingBy = new Set();    // ids of rallies with a read running
+const loadGen = new Map();      // rally id -> count of Replace loads; a read that started before one is discarded
 const newOf = id => newByRally[id] || (newByRally[id] = new Set());
 const pagesOf = id => pagesByRally[id] || (pagesByRally[id] = []);
 function dropPages(id) { (pagesByRally[id] || []).forEach(p => URL.revokeObjectURL(p.url)); delete pagesByRally[id]; }
@@ -435,11 +518,9 @@ function renderRoute() {
     const el = e.target, i = +el.dataset.i, k = el.dataset.k; if (k == null) return;
     const row = r.rows[i];
     if (k === 'restart') row.restart = el.checked;
-    else if (k === 'om') { const v = el.value.replace(/\s/g, '');
-      if (v === '') row.om = null;
-      else if (/^(\d*\.?\d+)?\/0*\.?0+$/.test(v)) { const n = Core.normRow({ om: v }); row.om = n.om; row.restart = true; }
-      else if (/^\d*\.?\d+$/.test(v)) row.om = +v;
-      else { toast('OM format: x.xx, x.xx/0.00, or /0.00'); renderRoute(); return; } }
+    else if (k === 'om') { const p = Core.parseOM(el.value);
+      if (!p) { toast('OM format: x.xx, x.xx/0.00, or /0.00'); renderRoute(); return; }
+      row.om = p.om; if (p.restart) row.restart = true; }
     else if (k === 'czt') { const v = el.value.trim(); const t = Core.parseTOD(v); if (v && t == null) { toast('CZT format: HH:MM:SS or HH:MM.cc'); renderRoute(); return; } row.czt = t; }
     else if (k === 'ri') { const res = Core.renameRI(r, i, el.value);
       if (!res.ok) { toast(res.reason); renderRoute(); return; }
@@ -553,11 +634,13 @@ async function readPages(only, model) {
   const rid = store.cur;
   if (!rid || readingBy.has(rid)) return; readingBy.add(rid); newOf(rid).clear();
   model = model || store.prefs.model || MODELS[0].id;
-  const list = pagesOf(rid), msgs = [];
+  const list = pagesOf(rid), msgs = [], gen = loadGen.get(rid) || 0;
+  const gone = () => !store.rallies[rid] || (loadGen.get(rid) || 0) !== gen;   // deleted, or replaced from a rally file, while reading
   const targets = list.map((p, i) => [p, i]).filter(([p, i]) => only ? only.includes(i) : p.state !== 'ok');
   const redraw = () => { if (store.cur === rid && store.rallies[rid]) renderRoute(); };
   for (const [p, i] of targets) {
-    if (!store.rallies[rid]) break;       // rally deleted while reading: discard
+    if (gone()) break;                    // rally deleted or replaced while reading: discard
+    const prev = { state: p.state, msg: p.msg };
     p.state = 'busy'; p.msg = `Reading (${modelName(model)})…`; redraw();
     const pend = [];                      // stored images (page copy, sign images) waiting for this read to merge
     try {
@@ -567,7 +650,7 @@ async function readPages(only, model) {
         const t = Vision.needsTurn(pg.img), sent = Vision.rotateImg(pg.img, t);          // rule 1: a page shot sideways is turned before it is sent
         const reply = await ocrOne(await jpegOf(sent), model);
         rows = reply.rows;
-        if (!store.rallies[rid]) break;
+        if (gone()) { p.state = prev.state; p.msg = prev.msg; break; }
         p.model = model;
         if (rows.length) {                            // page copy, bands, and sign images; a failure never fails the read
           const pid = 'pg' + newId().slice(1); pend.push(pid); pendingPages.add(pid);
@@ -596,6 +679,7 @@ async function readPages(only, model) {
           }
         }
       } finally { pg.bmp.close(); }
+      if (gone()) { p.state = prev.state; p.msg = prev.msg; pend.forEach(id => pendingPages.delete(id)); gcPages(); break; }   // replaced while its images were being stored
       const by = ` · ${modelName(model)}`;
       if (!rows.length) { p.state = 'bad'; p.msg = 'No Route Instructions found' + by; }
       else { const s = mergeIntoRally(rows, `Page ${i + 1}${by}`, rid); p.state = 'ok'; p.msg = `${rows.length} Route Instructions${by}`; msgs.push(s); }
@@ -714,9 +798,9 @@ function renderRun() {
   if ($('btnTA')) $('btnTA').onclick = () => taDialog(a);
   v.querySelectorAll('[data-sp]').forEach(b => b.onclick = () => setSpeedo((+r.speedo || 0) + +b.dataset.sp));
   if ($('fSpeedo')) editField($('fSpeedo'), val => {
-    const s = val.trim();
-    if (s === '' || !(+s >= 1 && +s <= SPEEDO_MAX)) { toast(`Speedometer must be between 1 and ${SPEEDO_MAX} mph`); return false; }
-    setSpeedo(+s);
+    const v = Core.parseSpeedo(val);
+    if (v === undefined) { toast(`Speedometer must be between 1 and ${SPEEDO_MAX} mph`); return false; }
+    setSpeedo(v);
   });
 }
 // Tapping a field selects its whole value, so typing replaces it.
@@ -759,7 +843,7 @@ function editField(inp, commit) {
     set.addEventListener('mousedown', e => e.preventDefault());
   }
 }
-const TA_MAX = Core.TA_MAX, SPEEDO_MAX = 100;
+const TA_MAX = Core.TA_MAX, SPEEDO_MAX = Core.SPEEDO_MAX;
 // TA dialog: steps and typing change a pending value; Set applies it, Cancel or tapping outside leaves TA as it was.
 function taDialog(a) {
   const r = R(), C = Core.compute(r), x = r.rows[a];
@@ -835,6 +919,7 @@ function pageImagesLine(r) {
   const ids = Core.pagesUsed(r.rows).filter(p => pageIndex.has(p));
   if (!ids.length) return 'Page images: none';
   const mb = ids.reduce((n, p) => n + pageIndex.get(p), 0) / 1048576, pages = ids.filter(p => !p.startsWith('sg')).length;   // the size includes the sign images
+  if (!pages) return `Page images: none; sign images ${mb.toFixed(1)} MB`;
   return `Page images: ${pages} ${pages === 1 ? 'page' : 'pages'}, ${mb.toFixed(1)} MB on this device`;
 }
 function renderData() {
@@ -850,51 +935,24 @@ function renderData() {
   </div>
   <div class="card"><h3>Export</h3>
     <div class="row"><button id="xCSV">Download CSV</button><button id="xJSON">Download JSON</button>
-      <button id="cCSV">Copy CSV</button><button id="cJSON">Copy JSON</button></div>
-    <div class="small muted" style="margin-top:6px">CSV holds the augmented Route Instructions (OM, VM, CZT, TA, TT, estimates, completion times). JSON is the full rally record and can be imported back.</div>
-  </div>
-  <div class="card"><h3>Import</h3>
-    <span class="filebtn">Import rally JSON<input type="file" id="fImport" accept=".json,application/json,text/plain" aria-label="Import rally JSON"></span>
-    <div class="small muted" style="margin-top:6px">Adds the rally as a new entry; nothing existing is overwritten.</div>
+      <button id="cCSV">Copy CSV</button></div>
+    <div class="small muted" style="margin-top:6px">CSV holds the augmented Route Instructions (OM, VM, CZT, TA, TT, estimates, completion times). JSON is the rally record as stored on this device, for support; it cannot be loaded back. To keep a rally or move it to another device, use Save on the Rallies tab.</div>
   </div>
   <div class="card"><h3>App</h3>
     <div class="small muted">${isInstalled() ? 'Installed: this app opens and runs with no internet.' : 'Install this app to your home screen (see the Rallies tab) so it opens with no internet.'}</div>
     ${getApiKey() ? `<div class="row" style="margin-top:8px"><button id="bKeyDel" class="danger">Remove saved API key from this device</button></div>` : ''}
     <div class="small muted" style="margin-top:8px">App version ${esc(APP_VERSION)}</div>
   </div>
-  <div class="card"><h3>Reset or delete</h3>
-    <div class="row"><button id="bResetRun" ${done || tas.length ? '' : 'disabled'}>Clear run data</button>
-      <button id="bDup">Duplicate rally</button>
-      <button id="bDel" class="danger">Delete rally</button></div>
+  <div class="card"><h3>Reset</h3>
+    <div class="row"><button id="bResetRun" ${done || tas.length ? '' : 'disabled'}>Clear run data</button></div>
   </div>`;
   const csv = () => Core.toCSV(r, store.prefs.fmt), json = () => JSON.stringify({ app: 'rally-monte-style', version: 1, rally: r }, null, 1);
   $('xCSV').onclick = () => offerFile(fileBase(r) + '.csv', csv(), 'text/csv');
   $('xJSON').onclick = () => offerFile(fileBase(r) + '.json', json(), 'application/json');
   $('cCSV').onclick = () => copyText(csv(), 'CSV');
-  $('cJSON').onclick = () => copyText(json(), 'JSON');
-  $('fImport').onchange = async e => {
-    const f = e.target.files[0]; e.target.value = ''; if (!f) return;
-    try {
-      const j = JSON.parse(await f.text()); const src = j.rally || j;
-      if (!Array.isArray(src.rows)) throw new Error('no rows');
-      const nr = { ...blankRally(), ...src, id: newId(), updated: now() };
-      nr.rows = nr.rows.map(x => ({ ...Core.normRow(x), band: null, signs: [], imgCheck: null }));   // bands and sign images are dropped: no page copy comes with the file
-      nr.crew = { driver: '', navigator: '', passengers: [], ...(src.crew || {}) };
-      if (typeof nr.vehicle !== 'string') nr.vehicle = '';
-      if (store.rallies[src.id]) nr.name = (nr.name || 'Rally') + ' (imported)';
-      store.rallies[nr.id] = nr; store.cur = nr.id; save(nr); toast('Imported ' + (nr.name || 'rally')); renderAll();
-    } catch (err) { toast('That file is not a rally JSON export'); }
-  };
   if ($('bKeyDel')) $('bKeyDel').onclick = () => confirmBox('Remove API key', 'Remove the saved Anthropic API key from this device?', 'Remove', () => { try { localStorage.removeItem(LS_KEY_API); } catch (e) {} renderData(); });
   $('bResetRun').onclick = () => confirmBox('Clear run data', `Clear the run data for “${esc(r.name || 'this rally')}”? The Route Instructions stay. This cannot be undone.`, 'Clear', () => {
     r.rows = r.rows.map(x => ({ ...x, done: false, ttDone: null, doneAt: null, estLock: null })); r.taEvents = []; save(r); renderData();
-  });
-  $('bDup').onclick = () => {
-    const nr = JSON.parse(JSON.stringify(r)); nr.id = newId(); nr.name = (r.name || 'Rally') + ' (copy)'; nr.created = nr.updated = now(); nr.rows.forEach(x => { x.band = null; x.signs = []; x.imgCheck = null; });
-    store.rallies[nr.id] = nr; store.cur = nr.id; save(nr); toast('Duplicated'); renderAll();
-  };
-  $('bDel').onclick = () => confirmBox('Delete rally', `Delete “${esc(r.name || 'Untitled rally')}” and all its data from this device? This cannot be undone. Export it first if you want a record.`, 'Delete', () => {
-    delete store.rallies[r.id]; delete runPos[r.id]; dropPages(r.id); delete newByRally[r.id]; store.cur = null; save(); gcPages(); show('rallies');
   });
 }
 

@@ -1,13 +1,13 @@
 """Page and sign images (issues #6 and #66): bands from the reader's row/y, the page copy and sign images in IndexedDB,
 inline sign images on Route and Run, the Page control, tap to expand, Data line, lifecycle (edit, Delete row, Clear, Re-read,
-Duplicate, JSON import, Delete rally), orientation, and the two failure paths. The Anthropic API is mocked and the page is a
+rally files (Save, Load, Replace, Keep both), Delete rally), orientation, and the two failure paths. The Anthropic API is mocked and the page is a
 synthetic ruled table drawn in the browser from invented content (no real pages).
 Run from the repo root after a build:
   Windows:    .venv/Scripts/python build.py && .venv/Scripts/python test/e2e/images.py
   Linux/WSL:  .venv/bin/python build.py && .venv/bin/python test/e2e/images.py
 Exits 1 if any check fails or an unexpected page error is captured."""
 from _common import APP_URL, OUT_DIR, LAYOUTS, launch_browser, check, capture_errors, run
-import asyncio, base64, io, json, re
+import asyncio, base64, io, json, re, zipfile
 from PIL import Image, ImageChops, ImageStat
 from playwright.async_api import async_playwright
 
@@ -277,23 +277,139 @@ async def main():
         await pg.fill(f'#rtEdit input[data-i="{ix}"][data-k=instr]', 'CHECKPOINT at [sign: deer crossing]'); await pg.keyboard.press('Tab'); await pg.evaluate("renderRoute()")
         check(await pg.evaluate(f"document.querySelectorAll('#rtEdit tr.pgrow')[{ix}].querySelectorAll('.sgafter img').length") == 0, 'back to one tag: the image replaces it again')
 
-        # ---- JSON export, import, Duplicate ----
-        j = await pg.evaluate("JSON.stringify({ app: 'rally-monte-style', version: 1, rally: R() })")
-        check('data:image' not in j and len(j) < 25000, f'JSON export holds no image data ({len(j)} bytes)')
-        await pg.click('#tabs button[data-v=data]')
-        await pg.set_input_files('#fImport', files=[{'name': 'r.json', 'mimeType': 'application/json', 'buffer': j.encode()}])
-        await pg.wait_for_function("R().rows.length > 0 && R().rows.every(x => !x.band && x.signs.length === 0)")
-        check(True, 'a JSON-imported rally has no bands and no sign images')
-        await pg.click('#tabs button[data-v=route]')
-        check('page image' not in (await pg.inner_text('#routeBody')), 'the imported rally has no page image flags')
-        check(await pg.evaluate("document.querySelectorAll('#rtEdit img.sgimg').length") == 0 and await pg.evaluate("document.querySelectorAll('#rtEdit button.pgbtn').length") == 0, 'the imported rally shows no images and no Page control')
-        check(await pg.evaluate("document.querySelectorAll('#rtEdit .sgph').length") >= 1, 'the imported rally shows its tags as placeholders')
-        check(await data_line() == 'Page images: none', 'the imported rally says Page images: none')
-        await pg.evaluate("store.cur = Object.keys(store.rallies).find(k => store.rallies[k].rows.some(x => x.band)); renderAll()")
+        # ---- rally file: Save, then Load (Keep both, Replace, Cancel, no id, content problems, rejections, a failed image store) ----
+        orig = await pg.evaluate("R().id")
         n_before = len(await sizes())
-        await pg.click('#tabs button[data-v=data]'); await pg.click('#bDup')
-        check(await pg.evaluate("R().rows.length > 0 && R().rows.every(x => !x.band && x.signs.length === 0) && /\\(copy\\)$/.test(R().name)"), 'Duplicate rally drops the bands and sign images')
-        check(len(await sizes()) == n_before, 'the original rally keeps its page copy and sign images after Duplicate')
+        sign_counts = await pg.evaluate("R().rows.map(x => x.signs.length)")
+        compute_of = "(id) => JSON.stringify(Core.compute(store.rallies[id]), (k, v) => typeof v === 'number' ? Math.round(v * 1000) / 1000 : v)"
+
+        async def save_file(rid, name):
+            await pg.click('#tabs button[data-v=rallies]')
+            async with pg.expect_download() as dl:
+                await pg.click(f'[data-save="{rid}"]')
+            d = await dl.value
+            check(d.suggested_filename.endswith('.rally'), f'Save names the file .rally ({d.suggested_filename})')
+            f = OUT_DIR / name; await d.save_as(f)
+            return f.read_bytes()
+
+        async def load_bytes(data, name='x.rally'):
+            await pg.click('#tabs button[data-v=rallies]')
+            await pg.set_input_files('#fLoad', files=[{'name': name, 'mimeType': 'application/octet-stream', 'buffer': data}])
+
+        async def dlg():
+            await pg.wait_for_selector('#modal.on', timeout=10000)
+            return await pg.inner_text('#mTitle'), await pg.inner_text('#mBody')
+
+        def rezip(src, edit, deflate=False):
+            zin = zipfile.ZipFile(io.BytesIO(src)); doc = json.loads(zin.read('rally.json')); edit(doc)
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED if deflate else zipfile.ZIP_STORED) as zo:
+                zo.writestr('rally.json', json.dumps(doc))
+                for n in zin.namelist():
+                    if n != 'rally.json': zo.writestr(n, zin.read(n))
+                if deflate: zo.writestr('readme.txt', 'not part of the rally')
+            return buf.getvalue()
+
+        fileA = await save_file(orig, 'roundtrip.rally')
+        z = zipfile.ZipFile(io.BytesIO(fileA)); names = z.namelist()
+        doc = json.loads(z.read('rally.json'))
+        check(names.count('rally.json') == 1 and len([n for n in names if n.startswith('signs/')]) == 4, f'the file holds rally.json and the four sign images ({names})')
+        check(all(i.compress_type == 0 for i in z.infolist()), 'the app writes its entries stored')
+        txt = z.read('rally.json').decode()
+        check(not re.search(r'"band"|imgCheck|"created"|"updated"|data:image', txt) and doc['kind'] == 'saved' and doc['rally']['id'] == orig, 'the file has no bands, imgCheck, timestamps, or image data, and says kind saved')
+        check([len(r.get('signs', [])) for r in doc['ris']] == sign_counts, 'each RI lists its sign images in order')
+
+        await load_bytes(fileA)
+        title, body = await dlg()
+        check(title == 'Rally already loaded' and 'is already on this device. Replace it with the file, or keep both?' in body, f'the same rally asks ({title!r})')
+        await pg.click('#mCancel'); await asyncio.sleep(0.3)
+        check(await pg.evaluate("Object.keys(store.rallies).length") == 1 and await pg.evaluate("R().id") == orig and len(await sizes()) == n_before, 'Cancel changes nothing')
+
+        await load_bytes(fileA); await dlg(); await pg.click('#mAlt')
+        await pg.wait_for_function("(id) => R().id !== id", arg=orig)
+        copy = await pg.evaluate("R().id")
+        check(await pg.evaluate("(o) => R().name === ((store.rallies[o].name || 'Untitled rally') + ' (2)')", orig), 'Keep both adds " (2)" to the name')
+        check(await pg.evaluate("[R().rows.length, R().rows.map(x => x.signs.length)]") == [len(sign_counts), sign_counts], 'the copy has the same rows and the same number of sign images per RI')
+        check(await pg.evaluate("R().rows.every(x => !x.band && !x.imgCheck)"), 'a loaded rally has no bands')
+        check(await pg.evaluate("(o) => R().rows.flatMap(x => x.signs).every(id => !store.rallies[o].rows.some(y => y.signs.includes(id)))", orig), 'the copy has sign images of its own')
+        check(await pg.evaluate(compute_of, copy) == await pg.evaluate(compute_of, orig), 'Core.compute is the same for the original and the loaded copy')
+        check(await pg.evaluate("document.getElementById('v-run').classList.contains('on')"), 'a rally saved from the app opens on Run')
+        k2 = await sizes()
+        check(len(k2) == n_before + 4, f'four new sign images are stored ({n_before} -> {len(k2)})')
+        await pg.click('#tabs button[data-v=route]')
+        await until("[...document.querySelectorAll('#rtEdit img.sgimg')].length > 0 && [...document.querySelectorAll('#rtEdit img.sgimg')].every(i => i.naturalWidth > 0)", 'the loaded sign images show on Route')
+        rt = await pg.inner_text('#routeBody')
+        want = await pg.evaluate(r"R().rows.filter(x => (x.instr.match(/\[sign:/gi) || []).length !== x.signs.length && (x.instr.match(/\[sign:/gi) || []).length).map(x => x.ri)")
+        got = re.findall(r'RI ([^:]+): (?:no sign images|\d+ of \d+ sign images)', rt)
+        check('page image' not in rt and want and sorted(got) == sorted(str(w) for w in want), f'a loaded rally has no band-based flags; a row whose tags and images differ has the sign-count flag ({want} / {got})')
+        copy_ids = await pg.evaluate("R().rows.flatMap(x => x.signs)")
+        mb = sum(k2[i] for i in copy_ids) / 1048576
+        line = await data_line()
+        m = re.fullmatch(r'Page images: none; sign images (\d+\.\d) MB', line)
+        check(m is not None and abs(float(m.group(1)) - mb) <= 0.051, f'the Data line for a rally with sign images only ({line})')
+        await pg.reload(); await pg.wait_for_selector('#tabs'); await asyncio.sleep(0.8)
+        check(set((await sizes()).keys()) == set(k2.keys()), 'after the next app start no loaded image has been freed')
+
+        # Replace: load the copy's own file back after changing the copy
+        fileB = await save_file(copy, 'copy.rally')
+        was_done = await pg.evaluate("R().rows[1].done")
+        await pg.evaluate("R().rows[0].instr = 'changed after saving'; R().rows[1].done = !R().rows[1].done; save(R())")
+        await load_bytes(fileB); await dlg(); await pg.click('#mOk')
+        await pg.wait_for_function("() => R().rows[0].instr !== 'changed after saving'")
+        check(await pg.evaluate("Object.keys(store.rallies).length") == 2 and await pg.evaluate("R().id") == copy, 'Replace keeps the id and the number of rallies')
+        check(await pg.evaluate("R().rows[1].done") == was_done, 'Replace puts the rally back as the file has it')
+        await asyncio.sleep(0.6)
+        now_ids = set(await pg.evaluate("R().rows.flatMap(x => x.signs)")); present = set((await sizes()).keys())
+        check(not (set(copy_ids) & present) and now_ids <= present and len(now_ids) == 4, 'Replace frees the images the old data used, and keeps the new ones')
+        check(len(present) == n_before + 4, 'and nothing else is left over')
+
+        # a file with no id loads without asking; written as a zip tool would (deflate, an extra file), and named .zip
+        n_r = await pg.evaluate("Object.keys(store.rallies).length")
+        def no_id(d):
+            del d['rally']['id']; d['kind'] = 'distributed'
+        await load_bytes(rezip(fileA, no_id, deflate=True), 'hand.zip')
+        await pg.wait_for_function("(n) => Object.keys(store.rallies).length > n", arg=n_r)
+        check(not await pg.evaluate("document.getElementById('modal').classList.contains('on')") and await pg.evaluate("document.getElementById('v-setup').classList.contains('on')"), 'no id: no question; a distributed file, with a .zip name, opens on Setup')
+        check(await pg.evaluate("(a) => R().rows.length === store.rallies[a].rows.length", orig), 'and it loads all its rows')
+
+        # content problems: the file loads and one notice lists them
+        info = {}
+        def problems(d):
+            del d['rally']['id']
+            k = next(i for i, r in enumerate(d['ris']) if r.get('signs')); j = next(i for i, r in enumerate(d['ris']) if not r.get('signs'))
+            d['ris'][k]['signs'] = ['signs/nothing.jpg']; d['ris'][j]['om'] = '5/3'; info['k'], info['j'] = d['ris'][k]['ri'], d['ris'][j]['ri']
+        await load_bytes(rezip(fileA, problems))
+        title, body = await dlg()
+        check(title == 'Rally file loaded' and f"1 sign image could not be read (RI {info['k']})" in body and f"1 value was left blank (RI {info['j']} OM)" in body, f'the notice lists what was dropped or blanked ({body!r})')
+        await pg.click('#mOk')
+        await pg.click('#tabs button[data-v=route]')
+        check(f"RI {info['k']}: no sign images" in await pg.inner_text('#routeBody'), 'Route flags the row whose image is missing')
+
+        # broken structure: rejected with a message, nothing changes
+        n_r = await pg.evaluate("Object.keys(store.rallies).length"); k_now = len(await sizes())
+        for data, want in [(b'not a zip', 'not a zip archive'), (json.dumps({'app': 'rally-monte-style', 'version': 1, 'rally': {'rows': []}}).encode(), 'earlier version’s JSON export'),
+                           (b'PK\x05\x06' + bytes(18), 'no rally.json')]:
+            await load_bytes(data); title, body = await dlg()
+            check(title == 'Rally file not loaded' and want in body, f'rejected: {want}')
+            await pg.click('#mOk')
+        check(await pg.evaluate("Object.keys(store.rallies).length") == n_r and len(await sizes()) == k_now, 'rejected files change nothing')
+
+        # a failed image store: the rally loads, its images are reported, and no image is left behind
+        k_now = len(await sizes()); n_r = await pg.evaluate("Object.keys(store.rallies).length")
+        def new_id(d): d['rally']['id'] = 'failput1'
+        await pg.evaluate("window.__failPut = true")
+        await load_bytes(rezip(fileA, new_id))
+        title, body = await dlg()
+        await pg.evaluate("window.__failPut = false")
+        check(title == 'Rally file loaded' and 'sign images could not be read' in body, f'a failed image store is reported ({body!r})')
+        await pg.click('#mOk'); await asyncio.sleep(0.6)
+        check(await pg.evaluate("Object.keys(store.rallies).length") == n_r + 1 and len(await sizes()) == k_now, 'and no image is left behind')
+
+        # clean up: delete the extra rallies (frees their images), and return to the original
+        for rid in [r for r in await pg.evaluate("Object.keys(store.rallies)") if r != orig]:
+            await pg.click('#tabs button[data-v=rallies]'); await pg.click(f'[data-rdel="{rid}"]'); await pg.click('#mOk')
+        await asyncio.sleep(0.6)
+        check(len(await sizes()) == n_before and await pg.evaluate("Object.keys(store.rallies).length") == 1, 'deleting the loaded rallies frees their images and leaves the original untouched')
         await pg.evaluate("store.cur = Object.keys(store.rallies).find(k => store.rallies[k].rows.some(x => x.band)); renderAll()")
 
         # ---- Re-read: a valid new band replaces the old band and images; a row with no valid band keeps both ----
@@ -474,7 +590,7 @@ async def main():
         await pg.click('#tabs button[data-v=route]'); api['rows'] = rows(ys); await read()
         await until("R().rows.filter(x => x.band).length > 0", 'rows have bands again before Delete rally')
         before = len(await sizes())
-        await pg.click('#tabs button[data-v=data]'); await pg.click('#bDel'); await pg.click('#mOk')
+        await pg.click('#tabs button[data-v=rallies]'); await pg.click(f'[data-rdel="{await pg.evaluate("R().id")}"]'); await pg.click('#mOk')
         await asyncio.sleep(0.6)
         left = await sizes()
         check(before > 1 and len(left) < before, f'Delete rally frees its images ({before} before, {len(left)} after)')

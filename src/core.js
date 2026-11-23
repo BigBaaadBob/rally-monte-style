@@ -48,6 +48,22 @@
     return `${Math.floor(r / 60)}:${p2(r % 60)}`;
   }
 
+  // ---------- entry rules (Setup and Route fields; also used to check a value read from a rally file) ----------
+  // Each returns the parsed value, or undefined when the entry is rejected.
+  const SPEEDO_MAX = 100;
+  function parseCN(v) { const s = String(v ?? '').trim(); return s === '' ? '' : /^\d{1,3}$/.test(s) ? +s : undefined; }   // blank, or 0-999
+  function parseOCF(v) { const s = String(v ?? '').trim(); return s !== '' && Number.isFinite(+s) && +s > 0 ? +s : undefined; }
+  function parseCloseMi(v) { const s = String(v ?? '').trim(); return s === '' ? CLOSE_MI : Number.isFinite(+s) && +s >= 0 && +s <= 5 ? +s : undefined; }
+  function parseSpeedo(v) { const s = String(v ?? '').trim(); return s !== '' && +s >= 1 && +s <= SPEEDO_MAX ? +s : undefined; }
+  // An OM as typed or printed: blank -> {om: null}; "5.94" -> {om}; "5.94/0.00" or "/0.00" -> {om, restart: true}; anything else -> null.
+  function parseOM(v) {
+    const s = String(v ?? '').replace(/\s/g, '');
+    if (s === '') return { om: null };
+    const m = s.match(/^(\d*\.?\d+)?\/0*\.?0+$/);
+    if (m) return { om: m[1] != null ? +m[1] : 0, restart: true };
+    return /^\d*\.?\d+$/.test(s) ? { om: +s } : null;
+  }
+
   // ---------- RI ordering ----------
   function riKey(ri) {
     const m = String(ri).match(/^(\d+(?:\.\d+)?)(.*)$/);
@@ -146,6 +162,12 @@
         f.push(`RI ${runText(rows, rows.map((y, k) => inRange(y, p) ? k : -1).filter(k => k >= 0))}: check page images`);
       }
       if (noSign.has(i)) f.push(noSign.get(i));
+      // A row with no band and no imgCheck (typed, pasted, or loaded from a rally file): its [sign: …] tags against the sign images present.
+      // Not worked out until the stored images are known (pageOk absent), and not for a row with no tags.
+      if (!x.band && !x.imgCheck && pageOk) {
+        const tags = (String(x.instr == null ? '' : x.instr).match(/\[sign:/gi) || []).length;
+        if (tags) { const have = (x.signs || []).filter(id => pageOk(id) !== false).length; if (have !== tags) f.push(have ? `RI ${x.ri}: ${have} of ${tags} sign images` : `RI ${x.ri}: no sign images`); }
+      }
       return f;
     });
   }
@@ -377,7 +399,7 @@
     return m && [0, 90, 180, 270].includes(+m[1]) ? +m[1] : 0;
   }
 
-  const Core = { parseTOD, fmtTOD, parseTA, fmtTA, TA_MAX, cmpRI, sameRI, normRow, dropStaleImgCheck, mergeRows, compute, activeIndex, legOf,
+  const Core = { parseCN, parseOCF, parseCloseMi, parseSpeedo, parseOM, SPEEDO_MAX, parseTOD, fmtTOD, parseTA, fmtTA, TA_MAX, cmpRI, sameRI, normRow, dropStaleImgCheck, mergeRows, compute, activeIndex, legOf,
     setTA, renameRI, completeActive, CLOSE_MI, closeMi, fmtOCF, uncomplete, lastCompleted, toCSV, parseCSV, parseOCR, parseRotation,
     normBand, normSigns, pagesUsed, signParts, imageFlags, noSignRows };
   if (typeof module !== 'undefined' && module.exports) module.exports = Core; else root.Core = Core;

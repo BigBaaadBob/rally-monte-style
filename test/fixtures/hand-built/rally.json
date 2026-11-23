@@ -1,0 +1,48 @@
+{
+  "format": "rally-monte-style",
+  "version": 1,
+  "kind": "distributed",
+  "rally": {
+    "name": "Example Rally",
+    "date": "2026-05-02",
+    "driver": "Jane Driver",
+    "navigator": "John Navigator",
+    "carNumber": 7,
+    "class": "C",
+    "ocf": 1.01,
+    "future": "ignored"
+  },
+  "ris": [
+    {
+      "ri": 1,
+      "om": "/0.00",
+      "czt": "09:00:00",
+      "cp": 1,
+      "instruction": "Begin rally at START.",
+      "done": true,
+      "doneAt": "2026-05-02T16:00:05Z",
+      "ttDone": "09:07:00"
+    },
+    {
+      "ri": 2,
+      "om": "0.31",
+      "instruction": "R at SIGNAL."
+    },
+    {
+      "ri": 3,
+      "om": "1.62",
+      "czt": "09:04:30",
+      "cp": 2,
+      "instruction": "CHECKPOINT at [sign: deer crossing].",
+      "signs": [
+        "signs/0001.png"
+      ]
+    }
+  ],
+  "ta": [
+    {
+      "ri": 2,
+      "ta": "1:05"
+    }
+  ]
+}
