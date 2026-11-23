@@ -107,10 +107,20 @@
 
   // Image flags for the Route screen (DESIGN § Flags). A row read from a page but left with no band carries imgCheck: that page copy's id.
   // pageOk(id) says whether a page copy is stored (null/undefined: not known yet). Returns one array of flag texts per row.
-  // The page flag (RI a–b: check page images) runs from the first to the last row read from a page whose headings were moved,
-  // rows with no band included.
+  // The page flag (RI a–b, c: check page images) lists, as runs in route order, the rows whose band is on a page copy whose headings were
+  // moved, and the rows read from it and left with no band.
   // A row with a band never has imgCheck: stored rows are cleaned on load (dropStaleImgCheck), and normRow and mergeRows keep the rule.
   function dropStaleImgCheck(rows) { rows.forEach(x => { if (x && x.band && x.imgCheck) x.imgCheck = null; }); return rows; }
+  // Row indexes (in route order) as runs: a run breaks where a row between two members is not one. 'a–b' (en dash), a single row alone, ', ' between.
+  function runText(rows, idxs) {
+    const set = new Set(idxs), out = [];
+    for (let i = 0; i < rows.length; i++) {
+      if (!set.has(i)) continue;
+      let j = i; while (set.has(j + 1)) j++;
+      out.push(j > i ? `${rows[i].ri}–${rows[j].ri}` : `${rows[i].ri}`); i = j;
+    }
+    return out.join(', ');
+  }
   // Tagged rows that got no sign image (DESIGN § Flags). Groups of row indexes, one per page copy: a group is two or more rows with a band and
   // [sign: …] tags, none of which has a sign image. Worked out from the rows each time, never stored. Rows with no band are not counted.
   function noSignGroups(rows) {
@@ -123,7 +133,7 @@
 
   function imageFlags(rows, pageOk) {
     const pageOf = x => x.band ? x.band.page : x.imgCheck || null;
-    const noSign = new Map(noSignGroups(rows).map(g => [g[0], `RI ${rows[g[0]].ri}–${rows[g[g.length - 1]].ri}: no sign images found`]));
+    const noSign = new Map(noSignGroups(rows).map(g => [g[0], `RI ${runText(rows, g)}: no sign images found`]));
     const moved = new Set(rows.filter(x => x.band && x.band.pageCheck).map(x => x.band.page));
     const inRange = (x, p) => pageOf(x) === p && (x.band ? !!x.band.pageCheck : true);
     const seen = new Set();
@@ -133,8 +143,7 @@
       else if (x.band ? x.band.check && !x.band.pageCheck : x.imgCheck && !moved.has(x.imgCheck)) f.push(`RI ${x.ri}: check page image`);
       if (p && moved.has(p) && inRange(x, p) && !seen.has(p)) {
         seen.add(p);
-        const mine = rows.filter(y => inRange(y, p));
-        f.push(`RI ${mine.length > 1 ? mine[0].ri + '–' + mine[mine.length - 1].ri : mine[0].ri}: check page images`);
+        f.push(`RI ${runText(rows, rows.map((y, k) => inRange(y, p) ? k : -1).filter(k => k >= 0))}: check page images`);
       }
       if (noSign.has(i)) f.push(noSign.get(i));
       return f;
