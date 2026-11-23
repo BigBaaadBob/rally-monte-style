@@ -314,6 +314,33 @@ async def main():
         used = await pg.evaluate("[...new Set(R().rows.flatMap(x => [x.band && x.band.page, ...x.signs]).filter(Boolean))]")
         check(ids_now == set(used), 'every stored image is in use: the replaced sign images were freed')
 
+        # ---- partial Re-read (#85, #86): a row that keeps its old band has no imgCheck; the page flag lists runs of the rows still on the copy ----
+        check(await pg.evaluate("R().rows.every(x => !(x.band && x.imgCheck))"), 'after a partial Re-read no row with a band has imgCheck')
+        saved = await pg.evaluate("JSON.stringify(R().rows.map(x => x.band))")
+        page_rows = await pg.evaluate("""() => { const p = R().rows.find(x => x.band).band.page;
+            return R().rows.map((x, i) => x.band && x.band.page === p ? i : -1).filter(i => i >= 0); }""")
+        check(len(page_rows) >= 3, f'a page copy with three or more rows to split ({len(page_rows)})')
+        if len(page_rows) >= 3:
+            mid = page_rows[len(page_rows) // 2]                        # the middle row of the page copy, picked by position
+            await pg.evaluate("""(mid) => { const rows = R().rows, p = rows.find(x => x.band).band.page;
+                rows.forEach((x, i) => { if (x.band && x.band.page === p) x.band.pageCheck = true; });
+                rows[mid].band = { ...rows[mid].band, page: 'pgMoved', pageCheck: undefined }; renderRoute(); }""", mid)
+            labels = await pg.evaluate("R().rows.map(x => String(x.ri))")
+            state = await pg.evaluate("R().rows.map(x => ({ page: x.band && x.band.page, pc: !!(x.band && x.band.pageCheck), ic: x.imgCheck || null }))")
+            pid = state[page_rows[0]]['page']
+            # DESIGN rule: rows whose band is on the copy with pageCheck, plus rows with no band whose imgCheck is the copy, in route order
+            members = [i for i, x in enumerate(state) if (x['page'] == pid and x['pc']) or (x['page'] is None and x['ic'] == pid)]
+            check(mid not in members and len(members) >= 2, 'the moved row is no longer a member of the page copy')
+            runs, k = [], 0                                             # the DESIGN rule: runs in route order, a non-member between two members breaks one
+            while k < len(members):
+                j = k
+                while j + 1 < len(members) and members[j + 1] == members[j] + 1: j += 1
+                runs.append(labels[members[k]] if j == k else f"{labels[members[k]]}–{labels[members[j]]}"); k = j + 1
+            want = f"RI {', '.join(runs)}: check page images"
+            ftxt = await pg.inner_text('.flags')
+            check(want in ftxt, f'the page flag lists the rows still on the copy, as runs: {want}')
+            await pg.evaluate("(b) => { R().rows.forEach((x, i) => { x.band = JSON.parse(b)[i]; }); renderRoute(); }", saved)
+
         # ---- Delete row frees its sign images; Clear Route Instructions frees everything ----
         ix = await pg.evaluate(ROW['two'])
         mine = await pg.evaluate(f"R().rows[{ix}].signs.slice()")
@@ -397,10 +424,17 @@ async def main():
         await until("R().rows.filter(x => x.band).length > 0", 'rows for the no-sign-images flag check')
         await pg.evaluate("() => { R().rows.forEach(x => { x.signs = []; }); save(R()); }")
         await pg.reload(); await pg.wait_for_selector('#tabs'); await pg.click('#tabs button[data-v=route]')
-        want = await pg.evaluate(r"""() => { const t = R().rows.filter(x => x.band && /\[sign:/.test(x.instr)); return { a: String(t[0].ri), b: String(t[t.length - 1].ri), ris: t.map(x => String(x.ri)), n: t.length }; }""")
+        want = await pg.evaluate(r"""() => { const t = R().rows.filter(x => x.band && /\[sign:/.test(x.instr)); return { a: String(t[0].ri), b: String(t[t.length - 1].ri), ris: t.map(x => String(x.ri)), n: t.length, all: R().rows.map(x => String(x.ri)) }; }""")
         await until("document.querySelector('.flags') && /no sign images found/.test(document.querySelector('.flags').textContent)", 'tagged rows with no sign images are flagged')
         ftxt = await pg.inner_text('.flags')
-        check(want['n'] >= 2 and len(re.findall('no sign images found', ftxt)) == 1 and f"RI {want['a']}–{want['b']}: no sign images found" in ftxt, f"the flag is listed once, from the first to the last tagged row ({want['a']}–{want['b']})")
+        pos = [want['all'].index(r) for r in want['ris']]              # DESIGN rule: the tagged rows as runs in route order; an untagged row between two breaks a run
+        runs, k = [], 0
+        while k < len(pos):
+            j = k
+            while j + 1 < len(pos) and pos[j + 1] == pos[j] + 1: j += 1
+            runs.append(want['ris'][k] if j == k else f"{want['ris'][k]}–{want['ris'][j]}"); k = j + 1
+        want_txt = f"RI {', '.join(runs)}: no sign images found"
+        check(want['n'] >= 2 and len(re.findall('no sign images found', ftxt)) == 1 and want_txt in ftxt, f"the flag is listed once, as runs of the tagged rows ({want_txt})")
         lit = await pg.evaluate(r"""() => [...document.querySelectorAll('#rtEdit tr')].map(tr => ({ ri: (tr.querySelector('input[data-k=ri]') || {}).value, flag: tr.classList.contains('flag') }))""")
         by = {x['ri']: x['flag'] for x in lit if x['ri'] is not None}
         check(all(by.get(ri) for ri in want['ris']), 'every tagged row highlights')

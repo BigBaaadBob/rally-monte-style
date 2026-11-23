@@ -363,6 +363,24 @@ assert.strictEqual(Core.parseOCR('no JSON here at all').length, 0, 'prose with n
   assert.deepStrictEqual(Core.pagesUsed(rep).sort(), ['p2', 'p3', 's2', 's3', 's9'], 's1 is no longer used, so it is freed');
   assert.deepStrictEqual(Core.pagesUsed(Core.mergeRows([], [{ ri: 1, signs: ['s1'] }]).rows), ['s1'], 'images without a band are still used');
   assert.ok(!Core.toCSV({ ...SAMPLE.rally, rows: old, taEvents: [] }, 'hms').includes('s2'), 'CSV has no image ids'); }
+// #85: a row that ends with a band never carries imgCheck (a Re-read that returns a row with no valid band leaves the old band)
+{ const good = { page: 'p1', top: 0.1, bottom: 0.2, left: 0.4, right: 0.95 };
+  assert.strictEqual(Core.normRow({ ri: 1, imgCheck: 'p1', band: good }).imgCheck, null, 'normRow: a row with a band has no imgCheck');
+  assert.strictEqual(Core.normRow({ ri: 2, imgCheck: 'p1' }).imgCheck, 'p1', 'normRow: a row with no band keeps its imgCheck');
+  assert.strictEqual(Core.normRow({ ri: 3, imgCheck: 'p1', band: { ...good, top: 0.9 } }).imgCheck, 'p1', 'an invalid band is no band, so imgCheck stays');
+  const old = Core.mergeRows([], [{ ri: 1, om: '1', instr: 'a', band: good }, { ri: 2, om: '2', instr: 'b', imgCheck: 'p1' }]).rows;
+  const again = Core.mergeRows(old, [{ ri: 1, om: '1', instr: 'a', imgCheck: 'p9' }]).rows;           // returned with no valid band
+  assert.deepStrictEqual(again[0].band, good, 'the old band is kept');
+  assert.strictEqual(again[0].imgCheck, null, 'a row that keeps its old band has no imgCheck');
+  assert.ok(again.every(x => !(x.band && x.imgCheck)), 'after the Re-read no row with a band has imgCheck');
+  assert.strictEqual(Core.mergeRows(old, [{ ri: 2, om: '2', instr: 'b', imgCheck: 'p9' }]).rows[1].imgCheck, 'p9', 'a row with no band at all takes the new imgCheck');
+  assert.strictEqual(Core.mergeRows(old, [{ ri: 2, om: '2', instr: 'b', band: good }]).rows[1].imgCheck, null, 'a new band clears the old imgCheck');
+  // a stale imgCheck already stored on a banded row (older build) is dropped when the rally loads
+  const stale = [{ ri: 1, band: good, imgCheck: 'p1' }, { ri: 2, imgCheck: 'p1' }, { ri: 3 }];
+  Core.dropStaleImgCheck(stale);
+  assert.ok(!stale[0].imgCheck, 'dropStaleImgCheck: a banded row loses its imgCheck');
+  assert.strictEqual(stale[1].imgCheck, 'p1', 'dropStaleImgCheck: a row with no band keeps its imgCheck');
+  assert.ok(!stale[2].imgCheck); }
 // image flags (DESIGN § Flags): a row read from a page with no band is flagged and sits inside the page flag's range
 { const bd = (page, extra) => ({ page, top: 0.1, bottom: 0.2, left: 0.1, right: 0.9, src: 'fallback', check: true, ...extra });
   const rows = [{ ri: 40, imgCheck: 'pgA' }, { ri: 41, band: bd('pgA', { pageCheck: true }) }, { ri: 42, band: bd('pgA', { pageCheck: true }) }, { ri: 51, band: bd('pgA', { pageCheck: true }) }, { ri: 52, band: bd('pgB', { src: 'rules' }) }, { ri: 53, band: bd('pgB', { check: false }) }]
@@ -391,7 +409,7 @@ assert.strictEqual(Core.parseOCR('no JSON here at all').length, 0, 'prose with n
   const mk = (ri, page, tags, signs) => Core.normRow({ ri, om: '1', instr: 'Go' + ' [sign: x]'.repeat(tags), band: page ? bd(page) : undefined, signs: signs || [] });
   const flat = rows => Core.imageFlags(rows, () => true).flat().filter(f => /no sign images found/.test(f));
   const rows = [mk(10, 'pgA', 0), mk(11, 'pgA', 1), mk(12, 'pgA', 0), mk(13, 'pgA', 2), mk(14, 'pgA', 1)];
-  assert.deepStrictEqual(flat(rows), ['RI 11–14: no sign images found'], 'three tagged rows, none with an image: one flag from the first to the last');
+  assert.deepStrictEqual(flat(rows), ['RI 11, 13–14: no sign images found'], 'three tagged rows, none with an image: one flag; the untagged row 12 between them breaks the run (#86)');
   assert.deepStrictEqual(Core.imageFlags(rows, () => true).map(f => f.length), [0, 1, 0, 0, 0], 'listed once, on the first tagged row');
   assert.deepStrictEqual(Core.noSignRows(rows), [1, 3, 4], 'only the tagged rows highlight');
   assert.deepStrictEqual(flat(rows.slice(0, 2)), [], 'one tagged row with no image gets no flag');
@@ -407,6 +425,37 @@ assert.strictEqual(Core.parseOCR('no JSON here at all').length, 0, 'prose with n
   assert.deepStrictEqual(flat([...rows.slice(0, 3), { ...rows[3], instr: 'Go' }, { ...rows[4], instr: 'Go' }]), [], 'one tagged row left: no flag');
   assert.deepStrictEqual(flat([rows[1], { ...rows[3], signs: ['s2'] }, rows[4]]), [], 'a Re-read that finds an image clears it');
   assert.ok(!('noSign' in rows[1]) && !Object.keys(rows[1]).some(k => /nosign/i.test(k)), 'nothing is stored on the row'); }
+// #86: the page flag and the sign flag list their rows as runs in route order (DESIGN § Flags). A run breaks where a row between two members is not one.
+{ const bd = (page, extra) => ({ page, top: 0.1, bottom: 0.2, left: 0.1, right: 0.9, src: 'fallback', check: true, ...extra });
+  const full = () => [0, 1, 2, 3, 4, 5].map(i => Core.normRow({ ri: 41 + i, om: '1', instr: 'Go', band: bd('pgA', { pageCheck: true }) }));
+  const pageFlag = rows => Core.imageFlags(rows, () => true).flat().filter(f => /check page images/.test(f));
+  const reread = (rows, i, band) => Core.mergeRows(rows, [{ ...rows[i], band, imgCheck: band ? undefined : 'pgB' }]).rows;   // a Re-read returns row i
+  const newBand = bd('pgB', { src: 'rules', check: false });
+  const rows = full(), L = i => rows[i].ri;
+  assert.deepStrictEqual(pageFlag(rows), [`RI ${L(0)}–${L(5)}: check page images`], 'one unbroken run keeps the range text');
+  assert.deepStrictEqual(pageFlag(reread(rows, 2, newBand)), [`RI ${L(0)}–${L(1)}, ${L(3)}–${L(5)}: check page images`], 'a middle row that moved splits the run');
+  assert.deepStrictEqual(pageFlag(reread(rows, 0, newBand)), [`RI ${L(1)}–${L(5)}: check page images`], 'the first row leaves: the range shrinks');
+  assert.deepStrictEqual(pageFlag(reread(rows, 5, newBand)), [`RI ${L(0)}–${L(4)}: check page images`], 'the last row leaves: the range shrinks');
+  const kept = reread(rows, 2, null);                                           // returned with no valid band: keeps its old band and stays
+  assert.deepStrictEqual(pageFlag(kept), [`RI ${L(0)}–${L(5)}: check page images`], 'a row returned with no valid band stays in the range');
+  const moved = rows.map((x, k) => k === 3 ? x : { ...x, band: { ...x.band, page: 'pgB', pageCheck: undefined } });   // every row but one has left
+  assert.deepStrictEqual(pageFlag(moved), [`RI ${L(3)}: check page images`], 'a single remaining row prints alone, never a–a');
+  // a row read from the page and left with no band is in the run like the others
+  const nb = full(); nb[2] = Core.normRow({ ri: nb[2].ri, om: '1', instr: 'Go', imgCheck: 'pgA' });
+  assert.deepStrictEqual(pageFlag(nb), [`RI ${nb[0].ri}–${nb[5].ri}: check page images`]);
+  assert.deepStrictEqual(pageFlag(reread(nb, 4, newBand)), [`RI ${nb[0].ri}–${nb[3].ri}, ${nb[5].ri}: check page images`], 'a no-band row stays a member; the moved one is out');
+  const gap = full(); gap[2] = { ...gap[2], ri: 'A7' };                         // a renamed row shows its new label; order is route order
+  gap[3] = { ...gap[3], band: { ...gap[3].band, page: 'pgB', pageCheck: undefined } };
+  assert.deepStrictEqual(pageFlag(gap), [`RI ${gap[0].ri}–A7, ${gap[4].ri}–${gap[5].ri}: check page images`], 'route order, current labels'); }
+// no sign images found: the sign flag lists runs in route order too; an untagged row between tagged ones breaks a run
+{ const bd = { page: 'pgA', top: 0.1, bottom: 0.2, left: 0.1, right: 0.9, src: 'rules' };
+  const mk = (ri, tags) => Core.normRow({ ri, om: '1', instr: 'Go' + ' [sign: x]'.repeat(tags), band: bd });
+  const flag = rows => Core.imageFlags(rows, () => true).flat().filter(f => /no sign images found/.test(f));
+  const rows = [mk(10, 1), mk(11, 1), mk(12, 0), mk(13, 1), mk(14, 0), mk(15, 1), mk(16, 1)];   // tagged: 0, 1, 3, 5, 6
+  assert.deepStrictEqual(flag(rows), [`RI ${rows[0].ri}–${rows[1].ri}, ${rows[3].ri}, ${rows[5].ri}–${rows[6].ri}: no sign images found`], 'untagged rows break runs');
+  assert.deepStrictEqual(Core.noSignRows(rows), [0, 1, 3, 5, 6], 'the highlight is unchanged');
+  const block = [mk(10, 1), mk(11, 1), mk(12, 1)];
+  assert.deepStrictEqual(flag(block), [`RI ${block[0].ri}–${block[2].ri}: no sign images found`], 'all in one block: the unbroken-run text'); }
 // the reader's page-level rotation (DESIGN § Reading pages): clockwise degrees to upright; missing or invalid means 0
 assert.strictEqual(Core.parseRotation('{"rotation": 180, "rows": []}'), 180);
 assert.strictEqual(Core.parseRotation('```json' + String.fromCharCode(10) + '{"rotation":90,"rows":[{"ri":1}]}' + String.fromCharCode(10) + '```'), 90);
