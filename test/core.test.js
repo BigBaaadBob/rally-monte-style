@@ -456,6 +456,27 @@ assert.strictEqual(Core.parseOCR('no JSON here at all').length, 0, 'prose with n
   assert.deepStrictEqual(Core.noSignRows(rows), [0, 1, 3, 5, 6], 'the highlight is unchanged');
   const block = [mk(10, 1), mk(11, 1), mk(12, 1)];
   assert.deepStrictEqual(flag(block), [`RI ${block[0].ri}–${block[2].ri}: no sign images found`], 'all in one block: the unbroken-run text'); }
+// entry rules shared by Setup, the Route editor, and rally files (DESIGN § Setup entry rules): the parsed value, or undefined when rejected
+for (const [v, want] of [['', ''], [' ', ''], ['0', 0], ['999', 999], [' 12 ', 12], [7, 7], ['1000', undefined], ['-1', undefined], ['1.5', undefined], ['x', undefined]]) assert.strictEqual(Core.parseCN(v), want, 'parseCN ' + JSON.stringify(v));
+for (const [v, want] of [['1', 1], ['1.0123', 1.0123], [' 0.98 ', 0.98], ['0', undefined], ['-1', undefined], ['', undefined], ['x', undefined]]) assert.strictEqual(Core.parseOCF(v), want, 'parseOCF ' + JSON.stringify(v));
+for (const [v, want] of [['', Core.CLOSE_MI], ['0', 0], ['5', 5], ['0.25', 0.25], ['5.01', undefined], ['-0.1', undefined], ['x', undefined]]) assert.strictEqual(Core.parseCloseMi(v), want, 'parseCloseMi ' + JSON.stringify(v));
+for (const [v, want] of [['1', 1], ['100', 100], ['35.5', 35.5], ['0.9', undefined], ['101', undefined], ['', undefined], ['  ', undefined], ['x', undefined]]) assert.strictEqual(Core.parseSpeedo(v), want, 'parseSpeedo ' + JSON.stringify(v));
+assert.strictEqual(Core.SPEEDO_MAX, 100);
+assert.deepStrictEqual([Core.parseOM(''), Core.parseOM(' '), Core.parseOM('5.94'), Core.parseOM(' 5.94 / 0.00'), Core.parseOM('5.94/0.00'), Core.parseOM('/0.00'), Core.parseOM('.5')],
+  [{ om: null }, { om: null }, { om: 5.94 }, { om: 5.94, restart: true }, { om: 5.94, restart: true }, { om: 0, restart: true }, { om: 0.5 }], 'parseOM: blank, plain, restart, bare restart');
+for (const v of ['5/3', 'x', '-1', '5.94/1.00', '1.2.3']) assert.strictEqual(Core.parseOM(v), null, 'parseOM rejects ' + v);
+// rows with no band and no imgCheck (typed, pasted, or loaded from a rally file): [sign: …] tags against the sign images present
+{ const mk = (ri, instr, signs) => Core.normRow({ ri, om: '1', instr, signs });
+  const flags = (rows, ok) => Core.imageFlags(rows, ok).flat();
+  const rows = [mk(1, 'A [sign: a] B', ['s1']), mk(2, 'A [sign: a] [sign: b]', ['s1']), mk(3, 'A [sign: a] [sign: b]', []), mk(4, 'no tags', []), mk(5, 'no tags', ['s1']), mk(6, '[sign: a] [SIGN: b] [sign: c]', ['s1', 's2', 's3'])];
+  assert.deepStrictEqual(flags(rows, () => true), ['RI 2: 1 of 2 sign images', 'RI 3: no sign images'], 'tags against images: k of m, none, a match, no tags, and an image without a tag');
+  assert.deepStrictEqual(flags(rows, id => id !== 's1'), ['RI 1: no sign images', 'RI 2: no sign images', 'RI 3: no sign images', 'RI 6: 2 of 3 sign images'], 'only images present in storage count');
+  assert.deepStrictEqual(flags(rows, null), [], 'not worked out until the stored images are known');
+  assert.deepStrictEqual(flags(rows), [], '... and with no storage check at all');
+  const band = { page: 'p1', top: 0.1, bottom: 0.2, left: 0, right: 1 };
+  assert.deepStrictEqual(flags([Core.normRow({ ri: 1, om: '1', instr: '[sign: a]', band }), Core.normRow({ ri: 2, om: '1', instr: '[sign: a]', imgCheck: 'p1' })], () => true).filter(f => /sign images$/.test(f)), [], 'a row with a band or imgCheck keeps today\'s flags only');
+  assert.deepStrictEqual(Core.imageFlags([mk(1, '[sign: a]', [])], () => true)[0], ['RI 1: no sign images']);
+  assert.ok(!('flag' in rows[0]) && !Object.keys(rows[0]).some(k => /sign.*flag/i.test(k)), 'derived, never stored'); }
 // the reader's page-level rotation (DESIGN § Reading pages): clockwise degrees to upright; missing or invalid means 0
 assert.strictEqual(Core.parseRotation('{"rotation": 180, "rows": []}'), 180);
 assert.strictEqual(Core.parseRotation('```json' + String.fromCharCode(10) + '{"rotation":90,"rows":[{"ri":1}]}' + String.fromCharCode(10) + '```'), 90);

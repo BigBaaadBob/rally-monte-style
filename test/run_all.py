@@ -25,6 +25,7 @@ if not shutil.which('node'):
     sys.exit(1)
 run('node', 'test/core.test.js')
 run('node', 'test/vision.test.js')
+run('node', 'test/rallyfile.test.js')
 for t in sorted(pathlib.Path('test/e2e').glob('*.py')):
     if t.name.startswith('_'): continue
     print(f'== {t.as_posix()}', flush=True)

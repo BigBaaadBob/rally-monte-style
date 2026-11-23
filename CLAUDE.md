@@ -29,6 +29,7 @@ Commands below use the Windows venv path; on Linux/WSL use `.venv/bin/python`. `
 ```sh
 node test/core.test.js                     # unit tests for src/core.js
 node test/vision.test.js                   # unit tests for src/vision.js (band finding, sign graphics); CI runs it too
+node test/rallyfile.test.js                # unit tests for src/rallyfile.js (rally file zip, encode, decode, validation); CI runs it too
 .venv/Scripts/python test/e2e/e2e6.py      # one browser test (Playwright); needs dist/ built
 .venv/Scripts/python test/e2e/pwa.py       # serves dist/ on 127.0.0.1:8765
 .venv/Scripts/python test/run_all.py       # build + unit tests + every e2e script; stops at first failure
@@ -42,12 +43,13 @@ node test/vision.test.js                   # unit tests for src/vision.js (band 
   - `e2e5.py`: Run screen Time Allowance dialog, entry rules, and speedometer (390 only). At all three layouts: the TA and speedometer strip, the active card with Complete and Undo, and full screen (header and tabs hidden, ✕ exits).
   - `e2e6.py`: Run screen TT and estimate display, NEXT IN, locked estimates, Undo order, and per-rally scroll (390 only). At all three layouts: scroll kept through changes, Complete placing the active RI near the top, and first-visit placement. Also asserts the Run list's columns (two with the CP column in landscape at 640 px or wider, else one with no CP) at the three layouts and at a 768x1024 wide portrait, which is not a supported layout and only checks that two columns need landscape. Use it for any Run-screen change.
   - `e2e7.py`: Route screen paste and CSV import, Read without an API key, and no offline-copy button (390 only).
-  - `pwa.py`: offline cache, update prompt, and API-key reading (photo read, merge by RI, rally switch during a read) with the Anthropic API mocked (390 only). Use it for anything touching install, offline, or API reading.
+  - `pwa.py`: offline cache, update prompt, and API-key reading (photo read, merge by RI, rally switch, Delete, and Replace from a rally file during a read) with the Anthropic API mocked (390 only). Use it for anything touching install, offline, or API reading.
   - `validation.py`: entry validation for CN, close-RI limit, OCF, OM, and the speedometer (390 only).
-  - `images.py`: page and sign images (issues #6 and #66) with the reader mocked and a synthetic ruled page with drawn signs, drawn in the browser: bands and `src`, page copy and sign images in IndexedDB (sign crops cut from the original, larger than the copy), inline sign images, images after the text when the counts differ, and placeholders on Route and Run at all three layouts, the Page control, tap to expand, upside-down and sideways pages, Data line (size includes the signs), the lifecycle (edit, Delete row, Clear, Re-read, JSON import, Duplicate, Delete rally), both failure paths, the nine orientation fixtures (`o1`–`o8` carry EXIF orientation 1–8, plus `o6`'s sideways pixels with tag 1; Pillow writes them at test time from one upright page above the page-copy size; `o1` is the reference and crops must match within a pixel tolerance, checked against mirrored and turned copies), and the `no sign images found` flag (390 only except the layout checks).
-  - `vehicle.py`: the Vehicle field on the set-up form. At all three layouts: its placement below Passengers and its width. At 390 only: persistence, the JSON round trip, old files, and CSV.
+  - `images.py`: page and sign images (issues #6 and #66) with the reader mocked and a synthetic ruled page with drawn signs, drawn in the browser: bands and `src`, page copy and sign images in IndexedDB (sign crops cut from the original, larger than the copy), inline sign images, images after the text when the counts differ, and placeholders on Route and Run at all three layouts, the Page control, tap to expand, upside-down and sideways pages, Data line (size includes the signs), the lifecycle (edit, Delete row, Clear, Re-read, rally files: Save then Load with Keep both, Replace, Cancel, a file with no id, content problems, rejected files, a failed image store, Delete rally), both failure paths, the nine orientation fixtures (`o1`–`o8` carry EXIF orientation 1–8, plus `o6`'s sideways pixels with tag 1; Pillow writes them at test time from one upright page above the page-copy size; `o1` is the reference and crops must match within a pixel tolerance, checked against mirrored and turned copies), and the `no sign images found` flag (390 only except the layout checks).
+  - `vehicle.py`: the Vehicle field on the set-up form. At all three layouts: its placement below Passengers and its width. At 390 only: persistence, the rally-file round trip, a file without Vehicle, and CSV.
+  - `rallyfile.py`: rally files and the Rallies and Data tabs: the controls (Rallies: New rally, New from sample, Load, and Open, Save, Delete on each rally; Data: no Import, Copy JSON, Duplicate, or Delete), Save by download, share sheet, cancelling, and share failure, Load refused when the device cannot save and over 50 MB, the hand-built fixture `test/fixtures/hand-built.rally`, `kind`, and Delete on the list (390 only except the control-fit check).
 - The guard test is at the end of `test/core.test.js`: it reads `dist/index.html` (run `build.py` first) and fails if it contains a removed claude.ai runtime identifier. CI builds before the unit tests, so it gates the Pages deploy.
-- CI (`.github/workflows/pages.yml`) runs only `python3 build.py`, `node test/core.test.js`, and `node test/vision.test.js`. It does not run the e2e tests.
+- CI (`.github/workflows/pages.yml`) runs only `python3 build.py`, `node test/core.test.js`, `node test/vision.test.js`, and `node test/rallyfile.test.js`. It does not run the e2e tests.
 
 ### Real-document evaluation
 
@@ -117,7 +119,7 @@ Merging is done by the owner on GitHub after review.
 
 ## Architecture
 
-**Build = inlining.** `build.py` replaces the `/*CORE*/`, `/*VISION*/`, `/*SAMPLE*/` and `/*APP*/` placeholders in `src/app.html` with the contents of `src/core.js`, `src/vision.js`, `src/sample.js` and `src/app.js`. The result is one self-contained `dist/index.html`. The build also:
+**Build = inlining.** `build.py` replaces the `/*CORE*/`, `/*VISION*/`, `/*RALLYFILE*/`, `/*SAMPLE*/` and `/*APP*/` placeholders in `src/app.html` with the contents of `src/core.js`, `src/vision.js`, `src/rallyfile.js`, `src/sample.js` and `src/app.js`. The result is one self-contained `dist/index.html`. The build also:
 - stamps a version (`UTC timestamp-gitsha`) into `__APP_VERSION__` (a meta tag, shown on the Data tab) and `__VERSION__` in `sw.js`
 - fills `__ASSETS__` in `web/sw.js` with the list of cached files
 - copies the manifest and icons into `dist/`
@@ -127,6 +129,7 @@ Source files must never contain `</script` (the build asserts this). Edit `src/`
 **Core vs. UI split.**
 - `src/core.js` holds pure computation, with no DOM and no clock: time parsing and formatting, `normRow`, `mergeRows` (merge by RI and sort, keeping completion state), `compute` (legs, restarts, VM, TT, Time Allowance (TA), estimates, close rows), CSV export, `parseCSV` (CSV import), and `parseOCR` (extracting JSON rows from model replies). It is a UMD-style IIFE: it exports via `module.exports` for Node tests, or sets `window.Core` in the browser. Keep it free of side effects so `test/core.test.js` can `require` it.
 - `src/vision.js` holds the pure image functions, also with no DOM and no clock: the sideways pre-pass (`needsTurn`), rule finding, the table frame and perspective correction, bands (`analyzePage`), and sign graphics. An image is RGBA `{data, w, h}`. Its thresholds are in one `K` block. It uses the same dual export pattern, so `test/vision.test.js` can `require` it. The app (`src/app.js`) does the canvas work (decoding, encoding, cropping signs from the original) around it.
+- `src/rallyfile.js` holds the pure rally file code (`docs/RALLY-FILE.md`), also with no DOM and no clock: zip read and write, `encode`, `decode` (validation and content problems), and `noticeText`. It uses `Core` for the entry rules and the same dual export pattern, so `test/rallyfile.test.js` can `require` it. The app (`src/app.js`) does the Save and Load plumbing around it: IndexedDB, image decoding, the share sheet, and the dialogs.
 - `src/sample.js` is the invented "Sample Rally" (`{ rally, rows }`: details and rows), used by the unit tests and by the New from sample button. It uses the same dual export pattern.
 - `src/app.js` is the whole UI: tabs (Rallies, Route, Run, Data), modals, and storage. `R()` returns the current rally.
 
@@ -139,7 +142,7 @@ Source files must never contain `</script` (the build asserts this). Edit `src/`
 **One runtime host.** `dist/index.html` runs only as a web page (GitHub Pages, installed or in a browser); it is not built or tested as a claude.ai artifact.
 Pages are read by calling `https://api.anthropic.com/v1/messages` directly from the browser, using the user's own API key (localStorage `rallyMonteStyle.apikey`, never exported). The model picker lists Sonnet 5.5 (default), Haiku 5.5 and Opus 5.5. `web/sw.js` serves the app's own origin cache-first and never intercepts cross-origin requests. A new version waits and is applied only when the user taps Reload (`skipWaiting` message). The app must never reload by itself.
 
-**Storage.** The whole app state is in localStorage under `rallyMonteStyle.v1` (`{rallies, cur, prefs}`) and is saved after every change. Export formats: CSV (an export-only report; Paste rows reads back its rows), JSON (the only round-trip format). Rallies are stored only on the device.
+**Storage.** The whole app state is in localStorage under `rallyMonteStyle.v1` (`{rallies, cur, prefs}`) and is saved after every change. Export formats: CSV (an export-only report; Paste rows reads back its rows), the `.rally` file (the only round-trip format; Save and Load on the Rallies tab; sign images ride along in the file, in IndexedDB on the device), and Download JSON (the stored rally for support, until #88; it cannot be loaded back). Rallies are stored only on the device.
 
 **UI constraints from DESIGN.md.** The Run screen must keep the user's scroll position through every change. It scrolls only when Complete is pressed. Test layouts: see `docs/DESIGN.md` § Testing.
 
