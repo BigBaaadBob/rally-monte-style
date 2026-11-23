@@ -23,7 +23,7 @@ try {
   const raw = localStorage.getItem(LS_KEY);
   if (raw) { const s = JSON.parse(raw); store = { ...store, ...s, prefs: { ...store.prefs, ...(s.prefs || {}) } }; }
 } catch (e) { lsOK = false; }
-for (const r of Object.values(store.rallies)) { if (typeof r.vehicle !== 'string') r.vehicle = ''; }
+for (const r of Object.values(store.rallies)) { if (typeof r.vehicle !== 'string') r.vehicle = ''; if (Array.isArray(r.rows)) Core.dropStaleImgCheck(r.rows); }   // a row with a band never has imgCheck
 
 function newId() { return 'r' + now().toString(36) + Math.random().toString(36).slice(2, 7); }
 function blankRally() {

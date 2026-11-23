@@ -313,6 +313,7 @@ async def main():
         ids_now = set((await sizes()).keys())
         used = await pg.evaluate("[...new Set(R().rows.flatMap(x => [x.band && x.band.page, ...x.signs]).filter(Boolean))]")
         check(ids_now == set(used), 'every stored image is in use: the replaced sign images were freed')
+        check(await pg.evaluate("R().rows.every(x => !(x.band && x.imgCheck))"), 'after a partial Re-read no row with a band has imgCheck')
 
         # ---- Delete row frees its sign images; Clear Route Instructions frees everything ----
         ix = await pg.evaluate(ROW['two'])

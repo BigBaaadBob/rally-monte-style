@@ -71,6 +71,7 @@
     if (typeof ri === 'string') { ri = ri.trim(); if (/^\d+$/.test(ri)) ri = +ri; }
     if (ri === '' || ri == null) ri = null;
     const czt = typeof x.czt === 'number' ? x.czt : parseTOD(x.czt);
+    const band = normBand(x.band);
     return {
       ri, om, restart, czt,
       cp: x.cp == null || x.cp === '' ? null : String(x.cp).trim(),
@@ -78,9 +79,9 @@
       info: ((x.info || '') + (x.note ? ` [OCR: ${x.note}]` : '')).trim(),
       done: !!x.done, ttDone: x.ttDone ?? null, doneAt: x.doneAt ?? null,
       estLock: x.estLock ?? null,
-      band: normBand(x.band),
+      band,
       signs: normSigns(x.signs),
-      imgCheck: typeof x.imgCheck === 'string' && x.imgCheck ? x.imgCheck : null,
+      imgCheck: !band && typeof x.imgCheck === 'string' && x.imgCheck ? x.imgCheck : null,   // a row with a band never has imgCheck
     };
   }
 
@@ -108,6 +109,8 @@
   // pageOk(id) says whether a page copy is stored (null/undefined: not known yet). Returns one array of flag texts per row.
   // The page flag (RI a–b: check page images) runs from the first to the last row read from a page whose headings were moved,
   // rows with no band included.
+  // A row with a band never has imgCheck: stored rows are cleaned on load (dropStaleImgCheck), and normRow and mergeRows keep the rule.
+  function dropStaleImgCheck(rows) { rows.forEach(x => { if (x && x.band && x.imgCheck) x.imgCheck = null; }); return rows; }
   // Tagged rows that got no sign image (DESIGN § Flags). Groups of row indexes, one per page copy: a group is two or more rows with a band and
   // [sign: …] tags, none of which has a sign image. Worked out from the rows each time, never stored. Rows with no band are not counted.
   function noSignGroups(rows) {
@@ -164,7 +167,7 @@
       const i = out.findIndex(o => sameRI(o.ri, r.ri));
       if (i >= 0) {
         const o = out[i];
-        out[i] = { ...r, done: o.done, ttDone: o.ttDone, doneAt: o.doneAt, estLock: o.estLock, band: r.band || o.band, signs: r.band ? r.signs : o.signs };   // Re-read: a new band brings its own images (even none); an old band keeps its images
+        out[i] = { ...r, done: o.done, ttDone: o.ttDone, doneAt: o.doneAt, estLock: o.estLock, band: r.band || o.band, signs: r.band ? r.signs : o.signs, imgCheck: r.band || o.band ? null : r.imgCheck };   // Re-read: a new band brings its own images (even none); an old band keeps its images
         replaced++;
       } else { out.push(r); added++; }
     }
@@ -365,7 +368,7 @@
     return m && [0, 90, 180, 270].includes(+m[1]) ? +m[1] : 0;
   }
 
-  const Core = { parseTOD, fmtTOD, parseTA, fmtTA, TA_MAX, cmpRI, sameRI, normRow, mergeRows, compute, activeIndex, legOf,
+  const Core = { parseTOD, fmtTOD, parseTA, fmtTA, TA_MAX, cmpRI, sameRI, normRow, dropStaleImgCheck, mergeRows, compute, activeIndex, legOf,
     setTA, renameRI, completeActive, CLOSE_MI, closeMi, fmtOCF, uncomplete, lastCompleted, toCSV, parseCSV, parseOCR, parseRotation,
     normBand, normSigns, pagesUsed, signParts, imageFlags, noSignRows };
   if (typeof module !== 'undefined' && module.exports) module.exports = Core; else root.Core = Core;

@@ -363,6 +363,24 @@ assert.strictEqual(Core.parseOCR('no JSON here at all').length, 0, 'prose with n
   assert.deepStrictEqual(Core.pagesUsed(rep).sort(), ['p2', 'p3', 's2', 's3', 's9'], 's1 is no longer used, so it is freed');
   assert.deepStrictEqual(Core.pagesUsed(Core.mergeRows([], [{ ri: 1, signs: ['s1'] }]).rows), ['s1'], 'images without a band are still used');
   assert.ok(!Core.toCSV({ ...SAMPLE.rally, rows: old, taEvents: [] }, 'hms').includes('s2'), 'CSV has no image ids'); }
+// #85: a row that ends with a band never carries imgCheck (a Re-read that returns a row with no valid band leaves the old band)
+{ const good = { page: 'p1', top: 0.1, bottom: 0.2, left: 0.4, right: 0.95 };
+  assert.strictEqual(Core.normRow({ ri: 1, imgCheck: 'p1', band: good }).imgCheck, null, 'normRow: a row with a band has no imgCheck');
+  assert.strictEqual(Core.normRow({ ri: 2, imgCheck: 'p1' }).imgCheck, 'p1', 'normRow: a row with no band keeps its imgCheck');
+  assert.strictEqual(Core.normRow({ ri: 3, imgCheck: 'p1', band: { ...good, top: 0.9 } }).imgCheck, 'p1', 'an invalid band is no band, so imgCheck stays');
+  const old = Core.mergeRows([], [{ ri: 1, om: '1', instr: 'a', band: good }, { ri: 2, om: '2', instr: 'b', imgCheck: 'p1' }]).rows;
+  const again = Core.mergeRows(old, [{ ri: 1, om: '1', instr: 'a', imgCheck: 'p9' }]).rows;           // returned with no valid band
+  assert.deepStrictEqual(again[0].band, good, 'the old band is kept');
+  assert.strictEqual(again[0].imgCheck, null, 'a row that keeps its old band has no imgCheck');
+  assert.ok(again.every(x => !(x.band && x.imgCheck)), 'after the Re-read no row with a band has imgCheck');
+  assert.strictEqual(Core.mergeRows(old, [{ ri: 2, om: '2', instr: 'b', imgCheck: 'p9' }]).rows[1].imgCheck, 'p9', 'a row with no band at all takes the new imgCheck');
+  assert.strictEqual(Core.mergeRows(old, [{ ri: 2, om: '2', instr: 'b', band: good }]).rows[1].imgCheck, null, 'a new band clears the old imgCheck');
+  // a stale imgCheck already stored on a banded row (older build) is dropped when the rally loads
+  const stale = [{ ri: 1, band: good, imgCheck: 'p1' }, { ri: 2, imgCheck: 'p1' }, { ri: 3 }];
+  Core.dropStaleImgCheck(stale);
+  assert.ok(!stale[0].imgCheck, 'dropStaleImgCheck: a banded row loses its imgCheck');
+  assert.strictEqual(stale[1].imgCheck, 'p1', 'dropStaleImgCheck: a row with no band keeps its imgCheck');
+  assert.ok(!stale[2].imgCheck); }
 // image flags (DESIGN § Flags): a row read from a page with no band is flagged and sits inside the page flag's range
 { const bd = (page, extra) => ({ page, top: 0.1, bottom: 0.2, left: 0.1, right: 0.9, src: 'fallback', check: true, ...extra });
   const rows = [{ ri: 40, imgCheck: 'pgA' }, { ri: 41, band: bd('pgA', { pageCheck: true }) }, { ri: 42, band: bd('pgA', { pageCheck: true }) }, { ri: 51, band: bd('pgA', { pageCheck: true }) }, { ri: 52, band: bd('pgB', { src: 'rules' }) }, { ri: 53, band: bd('pgB', { check: false }) }]
